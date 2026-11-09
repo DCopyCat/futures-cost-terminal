@@ -1,0 +1,10 @@
+streamlit>=1.38,<2
+akshare>=1.17
+pandas>=2.1
+numpy>=1.26
+tzdata>=2026.1
+PyMuPDF>=1.24,<2
+tushare>=1.4.24
+# Free local futures data lake; no Tushare token required for daily price rows.
+cnequity>=0.1
+tomlkit>=0.13,<1

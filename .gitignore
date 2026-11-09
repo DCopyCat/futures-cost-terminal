@@ -1,0 +1,33 @@
+# Runtime environment and generated data
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Live market data, private operational settings, generated reports
+cn_equity_lake/
+reports/
+logs/
+data/company_overrides.csv
+data/exchange_overrides.csv
+data/dce_daily_*.csv
+data/dce_margin_*.csv
+
+# Personal tokens and machine-specific configs
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.token
+*.pem
+*.key
+*.log
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
