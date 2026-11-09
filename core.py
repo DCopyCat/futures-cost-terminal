@@ -46,6 +46,8 @@ COLUMNS = [
     ("overnight_round_trip_plus_fund", "隔夜一开一平含双边基金/手(元)"),
     ("day_round_trip_plus_fund", "日内一开一平含双边基金/手(元;待核可为空)"),
     ("fee_status", "手续费核验口径"),
+    ("margin_source", "交易所保证金数据来源"),
+    ("company_close_today_verified", "公司平今费核验状态"),
     ("company_fee_type", "公司开仓费计费方式"),
     ("company_fee_rule", "公司开仓费率规则值"),
     ("company_close_yesterday_fee_type", "平昨覆盖计费方式"),
@@ -226,10 +228,24 @@ def _fetch_settle(api: Any, snapshot_date: str, tushare_token: str = "", tushare
         except Exception as ex:
             params[market] = {}
             errs[market] = f"结算参数获取失败：{type(ex).__name__}: {str(ex)[:150]}"
+    # Separate exact-day reviewed CSV fallback. Do not accept historical
+    # or undocumented values as today's exchange margin.
+    try:
+        from parameter_import import load_exchange_margin
+        manual = load_exchange_margin(DATA, snapshot_date)
+        for market, contracts in manual.items():
+            for sym, record in contracts.items():
+                existing = params.setdefault(market, {}).get(sym, {})
+                # Explicit user-reviewed exact-day CSV is preferred when present.
+                params[market][sym] = {**existing, **record}
+            if contracts:
+                errs.pop(market, None)
+    except Exception as exc:
+        errs['manual_exchange_csv'] = f'人工保证金CSV读取失败：{type(exc).__name__}: {str(exc)[:160]}'
     return params, errs
 
 
-def _latest_override(overrides: list[dict], market: str, var: str, contract: str, snapshot_date: str) -> Optional[dict]:
+def _latest_override(overrides: list[dict], market: str, var: str, contract: str, snapshot_date: str, *, exact_day: bool = False) -> Optional[dict]:
     candidates = []
     for row in overrides:
         if row.get('exchange', '').upper().strip() != market or row.get('variety', '').lower().strip() != var:
@@ -238,7 +254,9 @@ def _latest_override(overrides: list[dict], market: str, var: str, contract: str
         if specific and specific != contract:
             continue
         eff = _safe_date(row.get('effective_from'))
-        if eff and eff > snapshot_date:
+        if exact_day and eff != snapshot_date:
+            continue
+        if not exact_day and eff and eff > snapshot_date:
             continue
         score = (1 if specific else 0, eff)
         candidates.append((score, row))
@@ -366,17 +384,26 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         spec = contract_info.get((market, var)) or {}
         co = company.get((market, var)) or {}
         override = _latest_override(company_ov, market, var, sym, snap) or {}
-        ex_override = _latest_override(exchange_ov, market, var, sym, snap) or {}
+        # Exchange margin schedule must be confirmed for this *exact* trading day.
+        ex_override = _latest_override(exchange_ov, market, var, sym, snap, exact_day=True) or {}
+        manual_verified = (_safe_date(ex_override.get('verified_at')) <= now.astimezone(TZ).strftime('%Y%m%d')
+                           and len(_safe_date(ex_override.get('verified_at'))) == 8
+                           and bool(str(ex_override.get('source_note') or '').strip()))
+        if not manual_verified:
+            ex_override = {}
         m = _as_float(spec.get('multiplier'))
         price = x['settlement']
         notional = round(price * m, 4) if m else None
         params = settle.get(market, {}).get(sym) or {}
         ex_long = params.get('long')
         ex_short = params.get('short')
-        if _as_float(ex_override.get('exchange_margin_long_pct')) is not None:
-            ex_long = _as_float(ex_override.get('exchange_margin_long_pct'))
-        if _as_float(ex_override.get('exchange_margin_short_pct')) is not None:
-            ex_short = _as_float(ex_override.get('exchange_margin_short_pct'))
+        manual_margin_applied = False
+        for key,side in (('exchange_margin_long_pct','long'),('exchange_margin_short_pct','short')):
+            val = _as_float(ex_override.get(key))
+            if val is not None and 0 < val <= 100:
+                if side=='long':ex_long=val
+                else:ex_short=val
+                manual_margin_applied = True
         comp_long = _as_float(override.get('margin_long_pct'))
         comp_short = _as_float(override.get('margin_short_pct'))
         fee_type = override.get('open_fee_type') or co.get('open_fee_type')
@@ -393,7 +420,20 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         else:
             fee_close_yesterday = _fee_value(fee_type, fee_val, notional)
             close_yesterday_basis = '仅按默认单边费率试算平昨，未获公司独立确认'
-        fee_close = _fee_value(override.get('close_today_fee_type'), override.get('close_today_fee_value'), notional)
+        # A manually typed rate is not automatically an approved customer rate.
+        # Require a dated check and an auditable nonempty origin.
+        close_candidate = _fee_value(override.get('close_today_fee_type'), override.get('close_today_fee_value'), notional)
+        verification_day = _safe_date(override.get('verified_at'))
+        evidence = str(override.get('source_note') or '').strip()
+        try:
+            verified_date = date.fromisoformat(f'{verification_day[:4]}-{verification_day[4:6]}-{verification_day[6:]}')
+        except ValueError:
+            verified_date = None
+        verification_valid = (verified_date is not None and
+                              verification_day <= now.astimezone(TZ).strftime('%Y%m%d') and bool(evidence))
+        fee_close = close_candidate if verification_valid else None
+        close_today_verified = ('已录入核验日期与来源（仅适用已核实的默认规则）' if fee_close is not None
+                                else '缺少有效核验日期/来源或平今费率，待核')
         fund = round(notional * fund_per_100m / 1e8, 6) if notional is not None else None
         def plus_fund(fee, sides=1):
             return round(fee + fund * sides, 4) if fee is not None and fund is not None else None
@@ -405,7 +445,7 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         overnight_round_trip_plus_fund = plus_fund(overnight_round_trip, 2)
         day_round_trip_plus_fund = plus_fund(day_round_trip, 2)
         fee_status = (('开仓默认估算' if fee_open is not None else '开仓待核') + '；' + close_yesterday_basis + '；' +
-                      ('平今已填覆盖参数（仍须核验）' if fee_close is not None else '平今无公司确认费率，故留空'))
+                      ('平今有来源记录（仍须核实适用账户）' if fee_close is not None else '平今无公司确认费率，故留空'))
         raw_open = params.get('raw_open_fee', '')
         raw_close = params.get('raw_close_fee', '')
         if ex_override.get('exchange_open_fee_type') and ex_override.get('exchange_open_fee_value'):
@@ -420,7 +460,7 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         if comp_long is None or comp_short is None: issues.append('账户/公司保证金待确认')
         if fee_open is None: issues.append('公司开仓费率待确认')
         if fee_close_yesterday is None: issues.append('公司平昨费率覆盖项不完整/无可用默认收费')
-        if fee_close is None: issues.append('公司平今费率待确认')
+        if fee_close is None: issues.append('公司平今费率或核验凭据待确认')
         if not ex_override and (raw_open in ('', 'None', 'nan') or raw_close in ('', 'None', 'nan')):
             issues.append('交易所手续费字段缺项')
         if (not ex_override) and (raw_open or raw_close):
@@ -451,14 +491,16 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
             'day_round_trip_fee': day_round_trip,
             'overnight_round_trip_plus_fund': overnight_round_trip_plus_fund,
             'day_round_trip_plus_fund': day_round_trip_plus_fund,
-            'fee_status': fee_status,
+            'fee_status': fee_status, 'company_close_today_verified':close_today_verified,
+            'margin_source':(('同交易日人工覆盖项：'+str(ex_override.get('source_note'))) if manual_margin_applied else
+                             (params.get('origin') or ('交易所结算参数经AKShare获取' if params else '交易所未提供可核验保证金'))),
             'company_close_yesterday_fee_type': yesterday_type,
             'company_close_yesterday_fee_rule': yesterday_value if yesterday_value is not None else '', 
             'exchange_fee_raw_open': raw_open, 'exchange_fee_raw_close_today': raw_close,
             'data_status': status, 'issue': '；'.join(issues), 'data_source': source,
             'company_fee_type': fee_type, 'company_fee_rule': fee_val,
-            'company_close_today_fee_type': override.get('close_today_fee_type',''),
-            'company_close_today_fee_rule': override.get('close_today_fee_value',''),
+            'company_close_today_fee_type': override.get('close_today_fee_type','') if fee_close is not None else '',
+            'company_close_today_fee_rule': override.get('close_today_fee_value','') if fee_close is not None else '',
             'fee_source': override.get('source_note') or co.get('source_note', ''),
             'company_baseline_effective': override.get('effective_from') or co.get('effective_from', ''),
         })
@@ -509,7 +551,7 @@ def _html_report(report: dict) -> bytes:
         ('company_fee_close_today_plus_fund', '平今含基金/手'),
         ('overnight_round_trip_plus_fund', '隔夜开平双边含基金/手*'),
         ('day_round_trip_plus_fund', '日内开平双边含基金/手'),
-        ('fee_status', '手续费口径'),
+        ('fee_status', '手续费口径'), ('margin_source', '保证金来源'),
         ('data_status', '核验状态'), ('issue', '待核事项'),
     ]
     def table(columns: list[tuple[str,str]], records: list[dict]) -> str:

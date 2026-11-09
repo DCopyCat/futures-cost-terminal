@@ -12,6 +12,8 @@ from core import DATA, BASE, MARKETS, TZ, _load_csv, generate, save_report, pack
 from cne_runner import refresh_daily, CNE_CONFIG, CNE_DATA, LOG_DIR
 from cne_provider import CNEquityFuturesAPI
 from fee_pdf import parse_company_fee_pdf, fee_diff, install_fee_pdf
+from parameter_import import (parse_exchange_margin_csv, install_exchange_margin_csv,
+                              parse_company_close_today_csv, merge_company_close_today_csv)
 
 
 # Local override files must never be committed to GitHub. Initialize blank
@@ -57,6 +59,11 @@ with tab1:
             try:
                 last=json.loads(log.read_text(encoding='utf-8'))
                 st.write('上一次采集状态：',last.get('status','未知'))
+                st.write('采集模式：',last.get('capture_mode','未知'))
+                st.write('采集退出码：',last.get('capture_exit_codes',[]),' | 数据完整性审计退出码：',last.get('quality_gate_exit_code'))
+                st.json({'采集前本地湖':last.get('lake_before',{}).get('by_exchange',{}),
+                         '采集后本地湖':last.get('lake_after',{}).get('by_exchange',{})})
+                st.caption('完整性审计：0 表示检查通过；1 表示检测到缺口；2 表示证据不足。采集已写入数据与合约完整性是两回事。')
                 for i,step in enumerate(last.get('steps',[])):
                     st.write(f"第 {i+1} 步：退出码 {step.get('exit_code')}；{' '.join(step.get('args',[])[:4])}")
                     st.code(str(step.get('output',''))[-2300:] or '无日志输出',language='text')
@@ -68,6 +75,8 @@ with tab1:
         st.caption('HTTP 403/412、官网限流或新浪合约覆盖不足无法由此工具强行绕过；只显示真实已采集数据。')
     include_dce=st.checkbox('同时采集大商所免费逐合约行情（首次可能涉及大量上游请求）',value=True,
                             help='CNEquity 的 DCE 新浪路由首次可能枚举数百个具体合约；取消勾选可先生成五市场报告，大商所会显示缺失。')
+    force_repair=st.checkbox('手动补采最近 8 日行情（故障修复专用，日常不勾选）',value=False,
+                             help='正常每天应当执行增量日更。仅在明显缺漏且上游允许重试时使用补采，不能绕过限流。')
     col_run, col_demo = st.columns([2,1])
     with col_run:
         trigger_real=st.button('⟳ 免费更新并生成真实日报（CNEquity）',type='primary',use_container_width=True)
@@ -77,18 +86,21 @@ with tab1:
         with st.spinner('正在按 CNEquity 官方 CLI 采集六交易所的逐合约行情；被限流的市场会保留明确诊断……'):
             try:
                 with st.status('CNEquity 正在采集…',expanded=True) as run_status:
-                    update = refresh_daily(include_dce=include_dce, progress=lambda msg:st.write(msg))
+                    update = refresh_daily(include_dce=include_dce,force_backfill=force_repair,progress=lambda msg:st.write(msg))
                     run_status.update(label='本次 CNEquity 采集步骤已结束，开始计算报告',state='complete')
                 st.session_state['cn_update']=update
-                if update['status']!='完成':
+                if update.get('capture_exit_codes') and any(c!=0 for c in update['capture_exit_codes']):
                     st.warning('CNEquity 采集存在失败或降级：仍会尝试读取本地已发布行情。报告日期及缺失交易所必须自行核对。')
                 api = CNEquityFuturesAPI(CNE_CONFIG)
                 report = generate(api, fund_per_100m=fund, require_complete=strict,
                                   tushare_token=token)
                 report['cn_equity_update_status']=update['status']
+                report['cn_equity_quality_gate_exit_code']=update.get('quality_gate_exit_code')
                 report['cn_equity_update_steps']=[{'command':' '.join(s['args'][:4]),'exit_code':s['exit_code']} for s in update['steps']]
-                if update['status']!='完成':
-                    report['status']='CNEquity 采集有失败/降级（仅已发布数据；需核实日期）'
+                if update.get('capture_exit_codes') and any(c!=0 for c in update['capture_exit_codes']):
+                    report['status']='CNEquity 采集有降级（需核实日期和合约覆盖）'
+                if update.get('quality_gate_exit_code') not in (None,0):
+                    report['status'] += '；数据完整性证据不足/缺口（不可视为全量）'
                 directory, bundle=save_report(report)
                 st.session_state['report']=report
                 st.session_state['bundle']=bundle
@@ -105,7 +117,9 @@ with tab1:
                 st.error('未能获取可用的 CNEquity 已发布行情。下面显示具体诊断，绝不使用演示数据冒充真实报价。')
                 st.code(message,language='text')
                 if st.session_state.get('cn_update'):
-                    st.json({'采集状态':st.session_state['cn_update']['status'],'步骤退出码':[x['exit_code'] for x in st.session_state['cn_update']['steps']]})
+                    st.json({'采集状态':st.session_state['cn_update']['status'],
+                         '采集退出码':st.session_state['cn_update'].get('capture_exit_codes'),
+                         '数据完整性状态':st.session_state['cn_update'].get('quality_gate_exit_code')})
     if trigger_demo:
         from demo_api import DemoAPI
         report=generate(DemoAPI(),now=datetime.now(TZ),fund_per_100m=fund)
@@ -156,7 +170,8 @@ with tab1:
                          '大商所保证金来源':report.get('dce_margin_source'),
                          '各市场最新行情交易日':report.get('market_latest_dates'),
                          'CNEquity本地数据质量':report.get('cn_equity_source_quality'),
-                         'CNEquity更新结果':report.get('cn_equity_update_status')})
+                         'CNEquity更新结果':report.get('cn_equity_update_status'),
+                         '完整性审计退出码':report.get('cn_equity_quality_gate_exit_code')})
         selected_market = st.multiselect('交易所',list(MARKETS),default=list(MARKETS),format_func=lambda x:MARKETS[x])
         view_mode = st.radio('显示范围',['具体主力合约（默认）','全部合约（核验用）'],index=0,horizontal=True)
         only_main = view_mode.startswith('具体主力')
@@ -175,6 +190,10 @@ with tab1:
           ('overnight_round_trip_plus_fund','隔夜开平双边含基金*'),
           ('day_round_trip_plus_fund','日内开平双边含基金'),
           ('company_margin_one_lot','公司一手保证金'),
+          ('exchange_margin_long_pct','交易所多头保证金%'),
+          ('exchange_margin_short_pct','交易所空头保证金%'),
+          ('margin_source','保证金来源'),
+          ('company_close_today_verified','平今核验状态'),
           ('fee_status','手续费口径'), ('data_status','核验状态')]
         fee_fields = {'company_fee_open','company_fee_close_yesterday','company_fee_close_today',
                       'company_fee_open_plus_fund','company_fee_close_yesterday_plus_fund',
@@ -203,7 +222,8 @@ with tab1:
                     close_n=close_price*multiplier
                     open_fee=_fee_value(selected.get('company_fee_type'),selected.get('company_fee_rule'),open_n)
                     if scenario=='平今':
-                        close_fee=_fee_value(selected.get('company_close_today_fee_type'),selected.get('company_close_today_fee_rule'),close_n)
+                        close_fee=(_fee_value(selected.get('company_close_today_fee_type'),selected.get('company_close_today_fee_rule'),close_n)
+                                   if selected.get('company_fee_close_today') is not None else None)
                     else:
                         close_type=selected.get('company_close_yesterday_fee_type') or selected.get('company_fee_type')
                         close_rule=selected.get('company_close_yesterday_fee_rule')
@@ -280,8 +300,34 @@ with tab2:
             st.error(f'PDF解析/导入校验失败：{type(error).__name__}: {error}')
     st.write(f"已载入 {len(_load_csv(DATA/'contracts.csv'))} 种合约规格、{len(company_fees)} 条公司默认收费。")
     st.warning('公司保证金与平今费没有统一可靠公开源。要形成准确客户报价，需要拿到公司内部授权参数或逐账户核对。')
+    st.markdown('**批量导入已确认的开户默认平今手续费 CSV**')
+    st.caption('采用 templates/company_close_today_template.csv。必须填写生效日、核验日期、具体出处；支持明确免收的 0。仅默认收费，不录客户身份信息，不意味着适用于所有客户账户。')
+    closing_upload=st.file_uploader('导入公司默认平今规则（CSV）',type=['csv'],key='bulk_close_today')
+    if closing_upload is not None:
+        try:
+            closing_rows=parse_company_close_today_csv(closing_upload.getvalue())
+            st.success(f'格式检查通过：{len(closing_rows)} 条平今规则。请复核来源与账户适用范围。')
+            st.dataframe(closing_rows,hide_index=True,use_container_width=True)
+            if st.button('确认合并已核验平今规则',key='install_close_today'):
+                n=merge_company_close_today_csv(closing_upload.getvalue(),DATA)
+                st.success(f'已在本地合并 {n} 条；重新生成报告生效。')
+        except Exception as ex:
+            st.error('平今规则批量导入失败：'+str(ex))
+    st.markdown('**六市场同日合约保证金 CSV（核验补充）**')
+    st.caption('采用 templates/exchange_margin_daily_template.csv，必须是官方或经过人工核实的单一交易日、具体合约保证金率。无法自动证明 CSV 真实，且不会延用到次日。')
+    margin_upload=st.file_uploader('导入六市场同交易日保证金（CSV）',type=['csv'],key='multi_market_margin')
+    if margin_upload is not None:
+        try:
+            parsed_day, margins=parse_exchange_margin_csv(margin_upload.getvalue())
+            count=sum(len(v) for v in margins.values())
+            st.success(f'格式检查通过：交易日 {parsed_day}，{count} 个合约。仅按本日适用。')
+            if st.button('确认保存该日六市场保证金',key='install_exchange_margin'):
+                thedate,n=install_exchange_margin_csv(margin_upload.getvalue(),DATA)
+                st.success(f'已在本地保存 {thedate} 共 {n} 个合约；重新生成日报生效。')
+        except Exception as ex:
+            st.error('交易所保证金导入失败：'+str(ex))
     st.markdown('**公司费率与保证金覆盖项（编辑后需保存）**')
-    st.caption('若公司给出了独立平昨或平今费率，可填写 close_yesterday_fee_type/value、close_today_fee_type/value；RATE 为成交金额比例的小数，FIXED 为元/手。覆盖项适用范围需自行核验，勿填入客户身份信息。')
+    st.caption('若公司给出了独立平昨或平今费率，可填写 close_yesterday_fee_type/value、close_today_fee_type/value；RATE 为成交金额比例的小数，FIXED 为元/手。**平今必须同时提供 verified_at（核验日）和 source_note（来源说明）才会计算**。勿填入客户身份信息。')
     import pandas as pd
     path = DATA/'company_overrides.csv'
     raw = pd.read_csv(path, dtype=str).fillna('')
@@ -320,7 +366,7 @@ with tab2:
         except Exception as ex:
             st.error('CSV格式校验失败：'+str(ex))
     st.markdown('**交易所缺失参数手工覆盖项**')
-    st.caption('只能填经过官方资料确认的比例/收费方式；支持合约级/品种级覆盖。不能凭历史表猜当日数值。')
+    st.caption('交易所人工覆盖只允许 effective_from **精确等于报告结算日**；旧日期不会自动沿用。建议优先用上面的六市场每日保证金 CSV。')
     path2 = DATA/'exchange_overrides.csv'
     raw2 = pd.read_csv(path2,dtype=str).fillna('')
     if raw2.empty:

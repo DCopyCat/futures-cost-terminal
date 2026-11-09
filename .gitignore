@@ -15,6 +15,7 @@ data/company_overrides.csv
 data/exchange_overrides.csv
 data/dce_daily_*.csv
 data/dce_margin_*.csv
+data/exchange_margin_*.csv
 
 # Personal tokens and machine-specific configs
 .env

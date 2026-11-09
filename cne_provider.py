@@ -41,6 +41,8 @@ def parse_bars(frame: Any, start: str, end: str) -> tuple[dict[str,list[dict]],d
     rejected = Counter()
     seen = set()
     by_upstream = Counter()
+    date_counts = Counter()
+    oi_missing = Counter()
     for item in _rows(frame):
         exch = str(item.get('exchange','')).upper().strip()
         canonical = str(item.get('symbol','')).upper().strip()
@@ -69,6 +71,8 @@ def parse_bars(frame: Any, start: str, end: str) -> tuple[dict[str,list[dict]],d
         local_market=CNE_TO_LOCAL[exch]
         upstream = str(item.get('source','')).strip()
         by_upstream[(local_market,upstream)] += 1
+        date_counts[(local_market,day)] += 1
+        if oi is None or oi <= 0: oi_missing[local_market] += 1
         parsed[local_market].append({
             'symbol':match.group(1).lower()+match.group(2),
             'date':day,'settle':settle,'open_interest':oi,'volume':volume,
@@ -77,7 +81,11 @@ def parse_bars(frame: Any, start: str, end: str) -> tuple[dict[str,list[dict]],d
         })
     return parsed, {'accepted':sum(len(v) for v in parsed.values()), 'rejected':dict(rejected),
                     'by_exchange':{k:len(v) for k,v in parsed.items()},
-                    'upstream':{f'{m}:{src or "unknown"}':cnt for (m,src),cnt in by_upstream.items()}}
+                    'upstream':{f'{m}:{src or "unknown"}':cnt for (m,src),cnt in by_upstream.items()},
+                    'latest_dates':{m:max((d for (e,d) in date_counts if e==m),default=None) for m in parsed},
+                    'by_exchange_day':{f'{e}:{d}':n for (e,d),n in date_counts.items()},
+                    'oi_missing_or_zero':dict(oi_missing),
+                    'limitations':['DCE 新浪源不能证明无成交合约覆盖完整'] if parsed['DCE'] else []}
 
 
 class CNEquityFuturesAPI:

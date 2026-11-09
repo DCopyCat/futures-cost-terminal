@@ -1,3 +1,15 @@
+# Changelog
+
+## [0.6.0-rc1] - 2026-11-09
+
+- Prefer incremental derivatives daily update after initial small-window backfill; retain manual short-window repair without bypassing upstream limits.
+- Distinguish CNEquity futures-bar capture failures from independent derivates quality-gate results (including unverified exits).
+- Show per-exchange/day data counts, latest dates, upstream provenance and missing/zero open-interest counts; preserve DCE Sina coverage warning.
+- Add six-market, exact-trade-day, contract-level exchange margin CSV import with source attribution. Prevent reusing old manual exchange margins on the next trading day.
+- Add reviewed default-account close-today fee CSV import with effective date, verified date, provenance and explicit free-fee support; without evidence, close-today amount and intraday round-trip stay unquoted.
+- Extend Streamlit UI/exports with margin source, fee validation status and imported parameters. No client-specific account identifiers or credentials are stored.
+- Offline regression expanded to 19 tests; live exchange accessibility and broker account pricing **not verified**.
+
 # 版本记录（Changelog）
 
 ## v0.5.0 — 2026-11-09
