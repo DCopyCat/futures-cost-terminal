@@ -33,7 +33,8 @@ st.set_page_config(page_title="Futures Cost Terminal", page_icon="📊", layout=
 st.markdown('''<style>div.block-container{padding-top:2rem;max-width:1500px}h1{letter-spacing:-.5px}
 [data-testid="stMetricValue"]{font-weight:700} .stButton button[kind="primary"]{border-radius:10px;height:3.1rem}</style>''', unsafe_allow_html=True)
 st.title("期货每日结算成本工作台")
-st.caption("CNEquity 六市场具体主力 × 先锋2026-11-02默认手续费 × 开仓 / 平昨 / 平今 / 一开一平；账户实际费率需核实")
+_BUILD_VERSION = (BASE/'VERSION').read_text(encoding='utf-8').strip() if (BASE/'VERSION').exists() else 'unknown'
+st.caption(f"软件版本 {_BUILD_VERSION} ｜ CNEquity 六市场具体主力 × 先锋2026-11-02默认手续费；账户实际费率需核实")
 
 tab1, tab2, tab3 = st.tabs(["📈 生成日报", "⚙️ 公司参数维护", "📚 使用边界与来源"])
 
@@ -185,20 +186,23 @@ with tab1:
         st.caption('开仓、平昨采用先锋2026-11-02开户默认收费；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
         show_fields = [
           ('exchange_name','交易所'), ('variety_name','品种'), ('contract','具体主力合约'),
-          ('settlement','结算价'), ('company_fee_open','开仓/手'),
+          ('settlement','结算价'),
+          ('display_exchange_margin_long_pct','展示交易所保证金率（含历史）'),
+          ('display_exchange_margin_one_lot','展示交易所一手保证金（含历史）'),
+          ('display_company_margin_long_pct','展示公司保证金率（含历史）'),
+          ('display_company_margin_one_lot','展示公司一手保证金（含历史）'),
+          ('display_exchange_margin_status','交易所保证金口径'),
+          ('display_company_margin_status','公司保证金口径'),
+          ('company_fee_open','开仓/手'),
           ('company_fee_close_yesterday','平昨/手*'), ('company_fee_close_today','平今/手'),
           ('company_fee_open_plus_fund','开仓含基金'),
           ('company_fee_close_yesterday_plus_fund','平昨含基金'),
           ('company_fee_close_today_plus_fund','平今含基金'),
           ('overnight_round_trip_plus_fund','隔夜开平双边含基金*'),
           ('day_round_trip_plus_fund','日内开平双边含基金'),
-          ('company_margin_one_lot','公司一手保证金（已核验/录入）'),
-          ('historical_exchange_long_pct','交易所旧档率%（参考）'),
-          ('historical_exchange_one_lot','交易所旧档一手（估算）'),
-          ('historical_company_long_pct','先锋历史公司率%（参考）'),
-          ('historical_company_one_lot','先锋历史一手（估算）'),
           ('historical_exchange_basis','交易所旧档日期/口径'),
           ('historical_company_basis','先锋历史公司来源日期'),
+          ('company_margin_one_lot','当前公司录入一手保证金（未录为空）'),
           ('exchange_margin_reference_long_pct','公开保证金参考率%*'),
           ('exchange_margin_reference_one_lot','公开参考一手保证金*'),
           ('company_margin_notice_reference_long_pct','先锋公告推算公司参考率%*'),
@@ -222,7 +226,7 @@ with tab1:
         if not view:
             st.warning('当前筛选下没有可展示的合约。请切换「全部合约」、取消搜索筛选或展开数据源诊断。')
         st.dataframe(view, use_container_width=True, hide_index=True, height=580)
-        st.caption('保证金列：已核验交易所/公司值与公开参考值严格分开。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；仅供情景估算，不能直接对客。')
+        st.caption('最前面的“展示保证金”四列依次选择当日报表参数→公开参考→历史旧档；每个数字自带状态或旧档日期。正式当日核验字段不被覆盖。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；金额仅为情景估算，不能直接对客。')
         st.caption('* 平昨参考值仅为同默认单边费率假设；不保证实际平昨费率相同。表中所有费用为**每一手**、假设开平都在相同结算价成交；账户差异化费率以实际交易结算单为准。')
         with st.expander('按客户实际成交价模拟开仓/平仓成本（不录入客户信息）'):
             if rows:
