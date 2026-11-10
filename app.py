@@ -292,6 +292,39 @@ with tab1:
             st.download_button('↓ 下载这份已保存日报',data=prev.read_bytes(),
                               file_name=prev.name,mime='text/html')
 
+    with st.expander('📚 87个期货品种历史保证金参考总览（无需联网）',expanded=True):
+        st.caption('历史数据不是当天交易所/公司核定值：交易所源自2026年7—8月，先锋公司源自2026年3月20日官网日常品种基准。特殊合约或临近交割月可能提保。')
+        from historical_margin import historical_catalog
+        history = historical_catalog(DATA)
+        product_names = {(str(p.get('exchange','')).upper(),str(p.get('variety','')).lower()):p.get('variety_name','')
+                         for p in _load_csv(DATA/'contracts.csv')}
+        display_history = [{
+            '交易所': MARKETS.get(x['exchange'],x['exchange']),
+            '品种': product_names.get((x['exchange'],x['variety']),x['variety']),
+            '代码': x['variety'],
+            '交易所旧档多%': x['exchange_long_pct'],
+            '交易所旧档空%': x['exchange_short_pct'],
+            '交易所历史范围%': x['exchange_long_range'],
+            '交易所旧档日期': x['exchange_as_of'],
+            '旧档匹配方式': x['exchange_scope'],
+            '先锋旧公司多%': x['company_long_pct'],
+            '先锋旧公司空%': x['company_short_pct'],
+            '先锋官网发布日期': x['company_as_of'],
+            '交易所来源': x['exchange_url'],
+            '先锋公司来源': x['company_url'],
+        } for x in history]
+        if display_history:
+            st.dataframe(display_history,hide_index=True,use_container_width=True,height=430)
+            csv_buffer=io.StringIO(newline='')
+            writer=csv.DictWriter(csv_buffer,fieldnames=list(display_history[0]),lineterminator='\n')
+            writer.writeheader();writer.writerows(display_history)
+            st.download_button('↓ 下载87品种历史保证金参考CSV',
+                data=('\ufeff'+csv_buffer.getvalue()).encode('utf-8'),
+                file_name='historical_margin_reference_2026.csv',
+                mime='text/csv')
+        else:
+            st.info('未找到内置历史保证金基准，请检查 data/historical_*_margin.csv。')
+
 with tab2:
     st.markdown('#### 默认公司收费与合约规格')
     company_fees = _load_csv(DATA / 'company_fees.csv')

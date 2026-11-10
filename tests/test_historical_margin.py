@@ -73,3 +73,12 @@ def test_report_populates_historical_but_not_verified_dce_fields():
     assert '2026-08-03' in m['historical_exchange_basis']
     assert '2026-03-20' in m['historical_company_basis']
     assert m['data_status']=='待核'
+
+def test_offline_catalog_is_populated_without_daily_prices():
+    from historical_margin import historical_catalog
+    entries=historical_catalog()
+    assert len(entries)==87
+    assert all(x['exchange_long_pct'] is not None for x in entries)
+    assert all(x['company_long_pct'] is not None for x in entries)
+    assert sum(x['exchange']=='DCE' for x in entries)==23
+    assert sum(x['exchange']=='CZCE' for x in entries)==26

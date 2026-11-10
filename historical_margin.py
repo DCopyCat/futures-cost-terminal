@@ -125,3 +125,28 @@ def historical_company_reference(exchange: str, variety: str,
         'source_url':row['source_url'],
         'explanation':'先锋期货历史公开日常保证金品种基准；非本交易日确认值，专项合约/优惠/风险提保另行核对',
     }
+
+def historical_catalog(data_dir: Path | None = None) -> list[dict]:
+    """Offline reference catalog, independent of live futures prices and CNEquity."""
+    data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    _, groups = _exchange_index(str(data_dir/'historical_exchange_margin.csv'))
+    result = []
+    for exchange, variety in sorted(groups):
+        exchange_ref = historical_exchange_reference(exchange, variety, '', data_dir)
+        company_ref = historical_company_reference(exchange, variety, data_dir)
+        result.append({
+            'exchange':exchange,
+            'variety':variety,
+            'exchange_long_pct':exchange_ref.get('long'),
+            'exchange_short_pct':exchange_ref.get('short'),
+            'exchange_as_of':exchange_ref.get('as_of',''),
+            'exchange_scope':exchange_ref.get('scope',''),
+            'exchange_long_range':('–'.join(f'{n:g}' for n in exchange_ref['long_range'])
+                                   if exchange_ref else ''),
+            'company_long_pct':company_ref.get('long'),
+            'company_short_pct':company_ref.get('short'),
+            'company_as_of':company_ref.get('as_of',''),
+            'exchange_url':exchange_ref.get('source_url',''),
+            'company_url':company_ref.get('source_url',''),
+        })
+    return result
