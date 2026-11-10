@@ -180,7 +180,8 @@ with tab1:
         keyword = st.text_input('合约/品种搜索',placeholder='rb / 豆粕 / lc2701 / IF')
         rows = report['main_records'] if only_main else report['records']
         rows = [r for r in rows if r['exchange'] in selected_market and (not keyword or keyword.lower() in (r['contract']+r['variety_name']+r['variety']).lower())]
-        st.markdown('#### 客户一手手续费速查（前一交易日结算价估算）')
+        st.markdown('#### 主力合约成本速查：当日已核验值与历史参考并列')
+        st.warning('【历史参考补齐】交易所历史数据为 2026年7–8月旧档；先锋公司历史公开基准为2026年3月20日发布。旧保证金率与报告日结算价相乘的金额仅是情景估算，不是今天交易所或公司实际保证金。请以结算单/交易所及公司当日核定值为准。')
         st.caption('开仓、平昨采用先锋2026-11-02开户默认收费；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
         show_fields = [
           ('exchange_name','交易所'), ('variety_name','品种'), ('contract','具体主力合约'),
@@ -192,6 +193,12 @@ with tab1:
           ('overnight_round_trip_plus_fund','隔夜开平双边含基金*'),
           ('day_round_trip_plus_fund','日内开平双边含基金'),
           ('company_margin_one_lot','公司一手保证金（已核验/录入）'),
+          ('historical_exchange_long_pct','交易所旧档率%（参考）'),
+          ('historical_exchange_one_lot','交易所旧档一手（估算）'),
+          ('historical_company_long_pct','先锋历史公司率%（参考）'),
+          ('historical_company_one_lot','先锋历史一手（估算）'),
+          ('historical_exchange_basis','交易所旧档日期/口径'),
+          ('historical_company_basis','先锋历史公司来源日期'),
           ('exchange_margin_reference_long_pct','公开保证金参考率%*'),
           ('exchange_margin_reference_one_lot','公开参考一手保证金*'),
           ('company_margin_notice_reference_long_pct','先锋公告推算公司参考率%*'),
@@ -207,12 +214,15 @@ with tab1:
                       'company_fee_open_plus_fund','company_fee_close_yesterday_plus_fund',
                       'company_fee_close_today_plus_fund','overnight_round_trip_plus_fund',
                       'day_round_trip_plus_fund'}
-        view = [{label:('待核' if k in fee_fields and r.get(k) is None else r.get(k))
+        verified_fields = fee_fields | {'company_margin_one_lot','exchange_margin_long_pct',
+                                        'exchange_margin_short_pct','company_margin_long_pct',
+                                        'company_margin_short_pct'}
+        view = [{label:('待核' if k in verified_fields and r.get(k) is None else r.get(k))
                  for k,label in show_fields} for r in rows]
         if not view:
             st.warning('当前筛选下没有可展示的合约。请切换「全部合约」、取消搜索筛选或展开数据源诊断。')
         st.dataframe(view, use_container_width=True, hide_index=True, height=580)
-        st.caption('保证金列：已核验交易所/公司值与公开参考值严格分开；历史公告推算不等于今天的公司实际比例，不能直接对客。')
+        st.caption('保证金列：已核验交易所/公司值与公开参考值严格分开。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；仅供情景估算，不能直接对客。')
         st.caption('* 平昨参考值仅为同默认单边费率假设；不保证实际平昨费率相同。表中所有费用为**每一手**、假设开平都在相同结算价成交；账户差异化费率以实际交易结算单为准。')
         with st.expander('按客户实际成交价模拟开仓/平仓成本（不录入客户信息）'):
             if rows:

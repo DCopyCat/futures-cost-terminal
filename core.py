@@ -35,6 +35,16 @@ COLUMNS = [
     ("company_margin_short_pct", "公司空头保证金(%)"),
     ("exchange_margin_one_lot", "交易所多头一手保证金(元)"),
     ("company_margin_one_lot", "公司多头一手保证金(元)"),
+    ("historical_exchange_long_pct", "交易所历史保证金参考多头率(%)"),
+    ("historical_exchange_short_pct", "交易所历史保证金参考空头率(%)"),
+    ("historical_exchange_one_lot", "交易所历史参考一手估算金额(元)"),
+    ("historical_exchange_basis", "交易所历史保证金来源日期及范围"),
+    ("historical_exchange_source_url", "交易所历史参考URL"),
+    ("historical_company_long_pct", "先锋公开历史公司保证金参考多头率(%)"),
+    ("historical_company_short_pct", "先锋公开历史公司保证金参考空头率(%)"),
+    ("historical_company_one_lot", "先锋历史保证金参考一手估算金额(元)"),
+    ("historical_company_basis", "先锋历史公司保证金来源日期及范围"),
+    ("historical_company_source_url", "先锋历史保证金参考URL"),
     ("exchange_margin_reference_long_pct", "公开保证金参考多头(%；非结算核验)"),
     ("exchange_margin_reference_one_lot", "公开参考一手保证金(元)"),
     ("company_margin_notice_reference_long_pct", "先锋历史公告推算多头参考率(%；非当日确认)"),
@@ -427,6 +437,22 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         m = _as_float(spec.get('multiplier'))
         price = x['settlement']
         notional = round(price * m, 4) if m else None
+        from historical_margin import historical_exchange_reference, historical_company_reference
+        # Historical snapshots are NEVER used to populate live/verified margin.
+        old_exchange = historical_exchange_reference(market, var, sym, DATA)
+        old_company = historical_company_reference(market, var, DATA)
+        old_exchange_long = old_exchange.get('long')
+        old_company_long = old_company.get('long')
+        old_exchange_money = _nullable_round(notional * old_exchange_long / 100, 2) if notional is not None and old_exchange_long is not None else None
+        old_company_money = _nullable_round(notional * old_company_long / 100, 2) if notional is not None and old_company_long is not None else None
+        old_exchange_basis = (
+            f"{old_exchange['as_of']} 历史快照｜{old_exchange['scope']}｜"
+            f"{old_exchange['explanation']}｜同品种历史范围 "
+            f"{old_exchange['long_range'][0]:g}–{old_exchange['long_range'][1]:g}%"
+            if old_exchange else '没有历史资料')
+        old_company_basis = (
+            f"{old_company['as_of']} 先锋官网历史品种基准｜{old_company['explanation']}"
+            if old_company else '没有历史资料')
         params = settle.get(market, {}).get(sym) or {}
         reference_only = params.get('reference_only') is True
         ex_long = None if reference_only else params.get('long')
@@ -548,6 +574,16 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
             'margin_reference_source': margin_reference_source,
             'company_notice_reference_source': notice_source,
             'company_margin_source': company_margin_source,
+            'historical_exchange_long_pct': old_exchange_long,
+            'historical_exchange_short_pct': old_exchange.get('short'),
+            'historical_exchange_one_lot': old_exchange_money,
+            'historical_exchange_basis': old_exchange_basis,
+            'historical_exchange_source_url': old_exchange.get('source_url',''),
+            'historical_company_long_pct': old_company_long,
+            'historical_company_short_pct': old_company.get('short'),
+            'historical_company_one_lot': old_company_money,
+            'historical_company_basis': old_company_basis,
+            'historical_company_source_url': old_company.get('source_url',''),
             'company_margin_long_pct': comp_long, 'company_margin_short_pct': comp_short,
             'exchange_margin_one_lot': _nullable_round(notional * ex_long/100 if notional and ex_long is not None else None,2),
             'company_margin_one_lot': _nullable_round(notional * comp_long/100 if notional and comp_long is not None else None,2),
@@ -612,6 +648,12 @@ def _html_report(report: dict) -> bytes:
         ('notional', '一手名义价值'), ('exchange_margin_long_pct', '交易所保证金率%'),
         ('exchange_margin_one_lot', '交易所一手保证金'),
         ('company_margin_one_lot', '公司一手保证金（已录入）'),
+        ('historical_exchange_long_pct', '交易所历史参考率%（过期）'),
+        ('historical_exchange_one_lot', '交易所历史参考一手（情景）'),
+        ('historical_company_long_pct', '先锋历史参考率%（过期）'),
+        ('historical_company_one_lot', '先锋历史参考一手（情景）'),
+        ('historical_exchange_basis', '交易所历史依据/日期'),
+        ('historical_company_basis', '先锋历史依据/日期'),
         ('exchange_margin_reference_long_pct', '公开保证金参考率%*'),
         ('exchange_margin_reference_one_lot', '公开参考一手保证金*'),
         ('company_margin_notice_reference_long_pct', '先锋公告推算参考率%*'),
@@ -645,7 +687,7 @@ def _html_report(report: dict) -> bytes:
 <style>:root{{--ink:#162b43;--muted:#66778c;--line:#dae2eb}}body{{font-family:system-ui,"Microsoft YaHei",sans-serif;color:var(--ink);margin:30px;background:#f5f8fc}}main{{background:white;padding:28px;border-radius:15px}}h1{{margin:0 0 8px;font-size:25px}}p{{color:var(--muted)}}.stats{{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}}.stat{{border:1px solid var(--line);padding:12px 20px;border-radius:12px}}.stat b{{display:block;font-size:19px}}.warning{{padding:12px;background:#fff4e6;border:1px solid #f0d1a5;border-radius:9px;margin:18px 0}}.wrap{{overflow:auto;max-height:75vh;border:1px solid var(--line);border-radius:10px}}table{{border-collapse:collapse;font-size:12px;width:100%}}.full table{{min-width:2900px}}th,td{{text-align:left;border-bottom:1px solid #ebeff4;padding:9px 11px;white-space:nowrap}}thead th{{position:sticky;top:0;background:#e8f0fa;z-index:3}}tr.warn td{{color:#815d20}}tr:hover{{background:#f7faff}}footer{{margin-top:28px;color:var(--muted);font-size:12px}}button{{cursor:pointer;background:white;color:#28466b;border:1px solid #ccd9e6;border-radius:8px;padding:10px 15px;margin:0 8px 12px 0}}button.active{{background:#163a61;color:white}}@media print{{body{{margin:0;background:white}}.wrap{{max-height:none;overflow:visible}}table{{font-size:9px}}.full,button{{display:none!important}}}}</style></head><body><main>
 <h1>期货手续费与保证金每日核验报告</h1><p>默认按品种显示持仓量最大的<strong>具体主力合约</strong>（不是主力连续价格）；仅供内部成本估算。</p>
 <div class="stats"><div class="stat">生成日<b>{esc(report['report_date'])}</b></div><div class="stat">基准结算日<b>{esc(report['price_date'])}</b></div><div class="stat">行情完整性<b>{esc(report['status'])}</b></div><div class="stat">有效合约数<b>{len(report['records'])}</b></div><div class="stat">主力合约数<b>{len(report['main_records'])}</b></div><div class="stat">无法判定主力的品种<b>{unresolved}</b></div></div>
-<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。<strong>*保证金公开参考</strong>不是当日已核验交易所或公司收费，先锋历史公告加点不保证今天或某客户仍适用。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
+<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。<strong>*保证金公开参考</strong>不是当日已核验交易所或公司收费，先锋历史公告加点不保证今天或某客户仍适用。<strong>历史保证金数字</strong>来自2026年3至8月的旧档案，和本日报当前结算价结合计算出的金额只是情景示例，绝非今日应缴金额。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
 <button id="mainbtn" class="active" onclick="toggle('main')">具体主力合约（默认）</button><button id="allbtn" onclick="toggle('all')">全部合约（核验用）</button>
 <section id="main" class="main">{main_table}</section><section id="all" class="full" style="display:none">{all_table}</section>
 <footer>本报告不等于客户实际交易费用；一手开平手续费分别计算。隔夜开平=开仓+平昨；日内开平=开仓+平今；含基金合计额外加双边基金，全部以同一结算价假设开平。保证金=结算价×合约乘数×保证金率。夜盘归属下一交易日。生成于北京时间 {esc(report['created_at_bjt'])}。</footer></main>
