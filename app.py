@@ -13,7 +13,8 @@ from cne_runner import refresh_daily, CNE_CONFIG, CNE_DATA, LOG_DIR
 from cne_provider import CNEquityFuturesAPI
 from fee_pdf import parse_company_fee_pdf, fee_diff, install_fee_pdf
 from parameter_import import (parse_exchange_margin_csv, install_exchange_margin_csv,
-                              parse_company_close_today_csv, merge_company_close_today_csv)
+                              parse_company_close_today_csv, merge_company_close_today_csv,
+                              parse_company_margin_csv, install_company_margin_csv)
 
 
 # Local override files must never be committed to GitHub. Initialize blank
@@ -48,7 +49,8 @@ with tab1:
     with st.expander('大商所自动保证金与结算价：Tushare 授权接入（可选）'):
         st.caption('CNEquity 对大商所期货默认使用免费的新浪补充行情，部分无成交合约可能缺失。Tushare 仅作为可选备用，非默认，也不是免费保证金源。')
         token=st.text_input('Tushare Token（仅保留在当前浏览器会话中，不写入日报）',type='password',key='tushare_token')
-        st.caption('有 Token 不等于有权限。无授权时，大商所参数会显示待核；不会用陈旧历史参数补位。')
+        st.caption('有 Token 不等于有权限。无授权时可尝试带日期的免费第三方参考数据，但不等于已核验交易所保证金。')
+        st.caption('大商所官方对外门户 API 自 2025-12 开放，注册用户可申请免费接入业务参数；需在官网「数据服务 → 数据工具 → API服务」申请并获取官方接口文档后才能配置正式对接。')
     with st.expander('CNEquity 免费数据源检查 / 上次失败日志'):
         st.caption('CNEquity 不是在线现成 API，第一次需要在本机建立独立期货湖。工具自动创建配置；不会初始化整套 A 股。')
         st.write('独立期货配置：',str(CNE_CONFIG))
@@ -189,7 +191,13 @@ with tab1:
           ('company_fee_close_today_plus_fund','平今含基金'),
           ('overnight_round_trip_plus_fund','隔夜开平双边含基金*'),
           ('day_round_trip_plus_fund','日内开平双边含基金'),
-          ('company_margin_one_lot','公司一手保证金'),
+          ('company_margin_one_lot','公司一手保证金（已核验/录入）'),
+          ('exchange_margin_reference_long_pct','公开保证金参考率%*'),
+          ('exchange_margin_reference_one_lot','公开参考一手保证金*'),
+          ('company_margin_notice_reference_long_pct','先锋公告推算公司参考率%*'),
+          ('company_margin_notice_reference_one_lot','先锋公告推算一手资金*'),
+          ('margin_reference_source','公开参考来源'),
+          ('company_margin_source','公司保证金核验来源'),
           ('exchange_margin_long_pct','交易所多头保证金%'),
           ('exchange_margin_short_pct','交易所空头保证金%'),
           ('margin_source','保证金来源'),
@@ -204,6 +212,7 @@ with tab1:
         if not view:
             st.warning('当前筛选下没有可展示的合约。请切换「全部合约」、取消搜索筛选或展开数据源诊断。')
         st.dataframe(view, use_container_width=True, hide_index=True, height=580)
+        st.caption('保证金列：已核验交易所/公司值与公开参考值严格分开；历史公告推算不等于今天的公司实际比例，不能直接对客。')
         st.caption('* 平昨参考值仅为同默认单边费率假设；不保证实际平昨费率相同。表中所有费用为**每一手**、假设开平都在相同结算价成交；账户差异化费率以实际交易结算单为准。')
         with st.expander('按客户实际成交价模拟开仓/平仓成本（不录入客户信息）'):
             if rows:
@@ -255,7 +264,7 @@ with tab1:
                 file_name='futures_cost_'+report['price_date'].replace('-','')+suffix+'.zip',
                 mime='application/zip',use_container_width=True)
         st.caption('工作台本机保存位置：'+st.session_state['directory'])
-        st.caption('行情来源：CNEquity 开源期货湖；保证金来源：AKShare/授权数据或同交易日核验 CSV；公司费率：先锋 PDF。公司保证金与平今费不能由行情数据推定。')
+        st.caption('行情来源：CNEquity 开源期货湖；交易所核验保证金：结算参数/同日核验 CSV；CZCE/DCE 免费备用仅供参考；先锋历史公告加点仅作情景估算；公司实际保证金：当日公司核验文件或核实的账户设置。')
     else:
         st.markdown('#### 当前尚未生成日报')
         st.info('点击「免费更新并生成真实日报」会初始化/更新独立 CNEquity 期货湖，再展示具体主力合约；首次需下载上游行情，若受限流，查看上方日志。演示按钮始终不联网。')
@@ -326,6 +335,19 @@ with tab2:
                 st.success(f'已在本地保存 {thedate} 共 {n} 个合约；重新生成日报生效。')
         except Exception as ex:
             st.error('交易所保证金导入失败：'+str(ex))
+    st.markdown('**公司同交易日保证金 CSV（由内部系统/官方日报核验）**')
+    st.caption('采用 templates/company_margin_daily_template.csv，只保存某交易日具体合约的公司默认多空保证金；不收录客户信息，不自动推广为其他交易日或所有账户。')
+    company_margin_upload=st.file_uploader('导入公司当日默认保证金（CSV）',type=['csv'],key='company_margin_day')
+    if company_margin_upload is not None:
+        try:
+            dated, confirmed=parse_company_margin_csv(company_margin_upload.getvalue())
+            count=sum(len(v) for v in confirmed.values())
+            st.success(f'公司保证金 CSV 格式核验：{dated} 共 {count} 个具体合约。')
+            if st.button('确认保存公司当日保证金',key='save_company_margin_day'):
+                dated,n=install_company_margin_csv(company_margin_upload.getvalue(),DATA)
+                st.success(f'保存 {dated} 的公司默认保证金 {n} 条；重新生成日报后更新。')
+        except Exception as ex:
+            st.error('公司保证金 CSV 校验失败：'+str(ex))
     st.markdown('**公司费率与保证金覆盖项（编辑后需保存）**')
     st.caption('若公司给出了独立平昨或平今费率，可填写 close_yesterday_fee_type/value、close_today_fee_type/value；RATE 为成交金额比例的小数，FIXED 为元/手。**平今必须同时提供 verified_at（核验日）和 source_note（来源说明）才会计算**。勿填入客户身份信息。')
     import pandas as pd

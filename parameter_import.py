@@ -179,3 +179,58 @@ def merge_company_close_today_csv(raw: bytes, data_dir: Path) -> int:
     writer.writeheader();writer.writerows(current)
     _atomic_write(target, ('\ufeff'+dest.getvalue()).encode('utf-8'))
     return len(new)
+
+
+
+def parse_company_margin_csv(raw: bytes) -> tuple[str, dict[str, dict[str, dict]]]:
+    """Validated exact-day *default* broker margin. Never claim per-account applicability."""
+    needed = {'trade_date', 'exchange', 'contract',
+              'company_long_margin_pct', 'company_short_margin_pct', 'source_note'}
+    rows = _rows(raw, needed)
+    seen, days = set(), set()
+    result = {m: {} for m in EXCHANGES}
+    for n, row in enumerate(rows, 2):
+        trade_day = _day(row['trade_date'])
+        days.add(trade_day)
+        exch = str(row['exchange'] or '').strip().upper()
+        contract = str(row['contract'] or '').strip().lower()
+        note = str(row['source_note'] or '').strip()
+        if exch not in EXCHANGES or not SYMBOL.fullmatch(contract) or not note:
+            raise ValueError(f'第 {n} 行的交易所、具体合约或核验来源不完整')
+        key = (exch, contract)
+        if key in seen:
+            raise ValueError(f'同交易日公司保证金合约重复：{exch}/{contract}')
+        seen.add(key)
+        margin = []
+        for side in ('company_long_margin_pct', 'company_short_margin_pct'):
+            cell = str(row.get(side) or '').strip()
+            val = None if not cell else _decimal(cell, name=side, max_value=100)
+            if val is not None and val <= 0:
+                raise ValueError(f'公司保证金不能为 0：{exch}/{contract}')
+            margin.append(val)
+        if all(v is None for v in margin):
+            raise ValueError(f'至少需要填写一侧公司保证金率：{exch}/{contract}')
+        result[exch][contract] = {
+            'long': margin[0], 'short': margin[1],
+            'origin': f'已核验 {trade_day} 公司默认保证金 CSV：{note[:120]}',
+        }
+    if len(days) != 1:
+        raise ValueError('只能导入同一交易日的公司默认保证金')
+    return next(iter(days)), result
+
+
+def install_company_margin_csv(raw: bytes, data_dir: Path) -> tuple[str, int]:
+    trade_day, parsed = parse_company_margin_csv(raw)
+    count = sum(map(len, parsed.values()))
+    _atomic_write(data_dir / f'company_margin_{trade_day}.csv', raw)
+    return trade_day, count
+
+
+def load_company_margin(data_dir: Path, day: str) -> dict[str, dict[str, dict]]:
+    path = data_dir / f'company_margin_{day}.csv'
+    if not path.exists():
+        return {}
+    recorded_day, items = parse_company_margin_csv(path.read_bytes())
+    if recorded_day != day:
+        raise ValueError('公司保证金 CSV 的文件名与交易日不符')
+    return items

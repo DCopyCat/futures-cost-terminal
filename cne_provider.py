@@ -95,6 +95,7 @@ class CNEquityFuturesAPI:
     of that separate source must not stop the futures price report.
     """
     daily_source='CNEquity futures_bars（本地已发布数据，含上游来源）'
+    enable_public_margin_reference = True
     def __init__(self, config_path: Path, loader: Callable|None=None, margin_api: Any=None):
         self.config_path = Path(config_path)
         self._loader = loader
