@@ -35,7 +35,9 @@ st.markdown('''<style>div.block-container{padding-top:2rem;max-width:1500px}h1{l
 [data-testid="stMetricValue"]{font-weight:700} .stButton button[kind="primary"]{border-radius:10px;height:3.1rem}</style>''', unsafe_allow_html=True)
 st.title("期货每日结算成本工作台")
 _BUILD_VERSION = (BASE/'VERSION').read_text(encoding='utf-8').strip() if (BASE/'VERSION').exists() else 'unknown'
-st.caption(f"软件版本 {_BUILD_VERSION} ｜ CNEquity 六市场具体主力 × 先锋2026-11-02默认手续费；账户实际费率需核实")
+_FEE_DATES = sorted({str(x.get('effective_from','')) for x in _load_csv(DATA/'company_fees.csv') if x.get('effective_from')})
+_FEE_VERSION = _FEE_DATES[-1] if _FEE_DATES else '未知'
+st.caption(f"软件版本 {_BUILD_VERSION} ｜ CNEquity 六市场具体主力 × 先锋默认手续费PDF（已保存 {_FEE_VERSION}）｜账户实际费率需核实")
 
 tab1, tab2, tab3 = st.tabs(["📈 生成日报", "⚙️ 公司参数维护", "📚 使用边界与来源"])
 
@@ -208,7 +210,7 @@ with tab1:
         st.markdown('#### 主力合约成本速查：先锋最新已保存手续费 + 保证金参考')
         st.info('★ **新增：先锋开户默认手续费/手（PDF）**。费率按公司最新已保存的默认 PDF 提取；固定收费直接显示，比例收费按报告结算价×合约乘数换算。与“开仓/手（含本地覆盖）”分列，平今费仍须单独核验。')
         st.warning('【历史参考补齐】交易所历史数据为 2026年7–8月旧档；先锋公司历史公开基准为2026年3月20日发布。旧保证金率与报告日结算价相乘的金额仅是情景估算，不是今天交易所或公司实际保证金。请以结算单/交易所及公司当日核定值为准。')
-        st.caption('开仓、平昨采用先锋2026-11-02开户默认收费；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
+        st.caption(f'开仓默认收费参考先锋 {_FEE_VERSION} PDF；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
         show_fields = [
           ('exchange_name','交易所'), ('variety_name','品种'), ('contract','具体主力合约'),
           ('settlement','结算价'),
@@ -254,7 +256,7 @@ with tab1:
         if not view:
             st.warning('当前筛选下没有可展示的合约。请切换「全部合约」、取消搜索筛选或展开数据源诊断。')
         st.dataframe(view, use_container_width=True, hide_index=True, height=580)
-        st.caption('最左侧的新手续费列来自先锋最新已保存 PDF（目前为2026-11-02），不含保障基金，按结算价估算；账户覆盖值在后续“开仓/手”列。最前面的“展示保证金”四列依次选择当日报表参数→公开参考→历史旧档；每个数字自带状态或旧档日期。正式当日核验字段不被覆盖。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；金额仅为情景估算，不能直接对客。')
+        st.caption(f'最左侧的新手续费列来自先锋已保存的 {_FEE_VERSION} PDF，不含保障基金，按结算价估算；账户覆盖值在后续“开仓/手”列。最前面的“展示保证金”四列依次选择当日报表参数→公开参考→历史旧档；每个数字自带状态或旧档日期。正式当日核验字段不被覆盖。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；金额仅为情景估算，不能直接对客。')
         st.caption('* 平昨参考值仅为同默认单边费率假设；不保证实际平昨费率相同。表中所有费用为**每一手**、假设开平都在相同结算价成交；账户差异化费率以实际交易结算单为准。')
         with st.expander('按客户实际成交价模拟开仓/平仓成本（不录入客户信息）'):
             if rows:

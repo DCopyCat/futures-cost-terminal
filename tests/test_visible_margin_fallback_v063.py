@@ -84,7 +84,8 @@ def test_real_report_html_visible_fallback_and_original_verified_fields_empty():
     assert '展示公司一手保证金' in html
     assert '3,628.10 元（历史' in html
     assert '5,183.00 元（历史' in html
-    assert '0.6.3-rc1' in html
+    version = (Path(__file__).resolve().parents[1] / 'VERSION').read_text(encoding='utf-8').strip()
+    assert version in html
     csv_text = core._csv_bytes(report['main_records']).decode('utf-8-sig')
     assert '展示交易所保证金率' in csv_text
     assert '3,628.10 元（历史' in csv_text
