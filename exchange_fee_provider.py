@@ -60,7 +60,9 @@ def _rate(value: Any) -> float | None:
 
 def _date_of(value: Any) -> str:
     s=str(value or '').strip()
-    m=re.match(r'^(20\d\d)-(\d\d)-(\d\d)',s)
+    if re.fullmatch(r'20\d{6}',s):
+        s=s[:4]+'-'+s[4:6]+'-'+s[6:]
+    m=re.match;r'^(20\d\d)-(\d\d)-(\d\d)',s)
     if not m:return ''
     try:
         date.fromisoformat(m.group(0))

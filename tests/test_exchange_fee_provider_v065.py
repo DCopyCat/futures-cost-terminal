@@ -128,3 +128,11 @@ def test_daily_core_compares_exact_j_and_ad_contracts_without_touching_broker_ac
     raw=core._csv_bytes(report['main_records']).decode('utf-8-sig')
     assert '交易所开仓参考费/手(元)' in raw
     assert '先锋默认减交易所开仓参考毛差/手(元)' in raw
+
+def test_stale_source_date_is_explicitly_labeled():
+    one=normalize_reference_rows([fake(updated='2026-10-22 08:00:00')])
+    ref=compare_exchange_vs_broker(one,'DCE','j2701','20261110',192750,134.925)
+    assert '早于报告日' in ref['exchange_fee_reference_status']
+    newer=normalize_reference_rows([fake(updated='2026-11-12 08:00:00')])
+    ref=compare_exchange_vs_broker(newer,'DCE','j2701','20261110',192750,134.925)
+    assert '晚于报告日' in ref['exchange_fee_reference_status']
