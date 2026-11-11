@@ -149,3 +149,11 @@ def test_dated_public_seed_is_not_misrepresented_as_live():
     assert ad['exchange_fee_reference_open']==11.12
     assert ad['exchange_fee_reference_close_today']==0
     assert sum(r['exchange']=='CFFEX' for r in rows)>=8
+
+
+def test_streamlit_primary_columns_and_local_refresh_control_exist():
+    app=(Path(__file__).resolve().parents[1]/'app.py').read_text(encoding='utf-8')
+    assert "('exchange_fee_reference_display','交易所开仓/手（第三方参考）')" in app
+    assert "('company_default_fee_display','★先锋默认手续费/手（PDF）')" in app
+    assert app.index("('exchange_fee_reference_display','交易所开仓/手（第三方参考）')") < app.index("('company_default_fee_display','★先锋默认手续费/手（PDF）')")
+    assert '更新六市场交易所手续费参考（联网）' in app
