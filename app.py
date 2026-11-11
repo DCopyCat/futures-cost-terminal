@@ -13,6 +13,8 @@ from cne_runner import refresh_daily, CNE_CONFIG, CNE_DATA, LOG_DIR
 from cne_provider import CNEquityFuturesAPI
 from fee_pdf import parse_company_fee_pdf, fee_diff, install_fee_pdf
 from company_fee_view import format_company_fee_rule
+from exchange_fee_provider import (refresh_from_akshare, load_snapshot, variety_catalog,
+                                   SNAPSHOT_NAME, SOURCE_NAME)
 from parameter_import import (parse_exchange_margin_csv, install_exchange_margin_csv,
                               parse_company_close_today_csv, merge_company_close_today_csv,
                               parse_company_margin_csv, install_company_margin_csv)
@@ -37,6 +39,7 @@ st.title("期货每日结算成本工作台")
 _BUILD_VERSION = (BASE/'VERSION').read_text(encoding='utf-8').strip() if (BASE/'VERSION').exists() else 'unknown'
 _FEE_DATES = sorted({str(x.get('effective_from','')) for x in _load_csv(DATA/'company_fees.csv') if x.get('effective_from')})
 _FEE_VERSION = _FEE_DATES[-1] if _FEE_DATES else '未知'
+_EXCHANGE_FEE_PATH = DATA / SNAPSHOT_NAME
 st.caption(f"软件版本 {_BUILD_VERSION} ｜ CNEquity 六市场具体主力 × 先锋默认手续费PDF（已保存 {_FEE_VERSION}）｜账户实际费率需核实")
 
 tab1, tab2, tab3 = st.tabs(["📈 生成日报", "⚙️ 公司参数维护", "📚 使用边界与来源"])
@@ -73,6 +76,38 @@ with tab1:
                                mime='text/csv')
         else:
             st.warning('没有已保存的先锋默认手续费表，请去“公司参数维护”导入最新 PDF。')
+    with st.expander('⚖️ 六市场逐品种交易所参考手续费 vs 先锋默认手续费（离线可查）',expanded=True):
+        st.caption('交易所数据来自 AKShare futures_comm_info → 九期网第三方逐合约参考，不是交易所核验结算单。固定元/手、按成交金额万分之计费，平今可能与开仓不同。公司默认收费不是客户账户费率。')
+        if st.button('⟳ 更新六市场交易所手续费参考（联网）',key='refresh_exchange_fee_ref'):
+            try:
+                stats=refresh_from_akshare(_EXCHANGE_FEE_PATH)
+                st.success(f"参考数据已更新：{stats['contracts']} 合约、{stats['varieties']} 品种；费率源更新日期 {stats['updated_min']} 至 {stats['updated_max']}。")
+            except Exception as err:
+                st.warning('第三方数据更新失败（不清除已有缓存）：'+str(err)[:280])
+        exchange_fee_rows=load_snapshot(_EXCHANGE_FEE_PATH)
+        st.write(f'本机已有第三方交易所手续费参考：{len(exchange_fee_rows)} 个具体合约；来源：{SOURCE_NAME}')
+        _broker_rows=_load_csv(DATA/'company_fees.csv')
+        _version=max((r.get('effective_from','') for r in _broker_rows),default='')
+        _broker_rows=[r for r in _broker_rows if r.get('effective_from','')==_version]
+        _cat=variety_catalog(exchange_fee_rows,_broker_rows)
+        _catalog=[{
+            '交易所':MARKETS.get(c['exchange'],c['exchange']),
+            '品种':c['variety_name'],'代码':c['variety'],
+            '交易所开仓参考规则':c['exchange_open_rule'],
+            '第三方费率更新':c['exchange_fee_update'] or '待核',
+            '覆盖合约数':c['reference_contracts'],
+            '先锋默认收费规则':format_company_fee_rule(c['broker_default_type'],c['broker_default_value']),
+            '先锋PDF日期':c['broker_date'],
+        } for c in _cat]
+        if _catalog:
+            st.dataframe(_catalog,hide_index=True,use_container_width=True,height=390)
+            buf=io.StringIO(newline='')
+            writer=csv.DictWriter(buf,fieldnames=list(_catalog[0]),lineterminator='\n')
+            writer.writeheader();writer.writerows(_catalog)
+            st.download_button('↓ 下载六市场交易所与先锋默认手续费参考对照CSV',
+                data=('\ufeff'+buf.getvalue()).encode('utf-8'),
+                file_name='exchange_vs_broker_fee_reference.csv',mime='text/csv')
+        st.caption('如果某品种不同合约适用不同费率，以上只提示差异；真正金额必须在主力合约日报用该具体合约的结算价换算。没有获取到的品种保持待核，绝不拿其他合约或交易所费率填补。')
     with st.expander('大商所自动保证金与结算价：Tushare 授权接入（可选）'):
         st.caption('CNEquity 对大商所期货默认使用免费的新浪补充行情，部分无成交合约可能缺失。Tushare 仅作为可选备用，非默认，也不是免费保证金源。')
         token=st.text_input('Tushare Token（仅保留在当前浏览器会话中，不写入日报）',type='password',key='tushare_token')
@@ -120,6 +155,14 @@ with tab1:
                 st.session_state['cn_update']=update
                 if update.get('capture_exit_codes') and any(c!=0 for c in update['capture_exit_codes']):
                     st.warning('CNEquity 采集存在失败或降级：仍会尝试读取本地已发布行情。报告日期及缺失交易所必须自行核对。')
+                # Independent fee source; its outage must not block real price reports.
+                if (not _EXCHANGE_FEE_PATH.exists() or
+                    datetime.fromtimestamp(_EXCHANGE_FEE_PATH.stat().st_mtime,TZ).date() < datetime.now(TZ).date()):
+                    try:
+                        refreshed=refresh_from_akshare(_EXCHANGE_FEE_PATH)
+                        st.info(f"交易所手续费参考更新：{refreshed['contracts']} 个具体合约，{refreshed['varieties']} 个品种。")
+                    except Exception as fee_error:
+                        st.warning('交易所手续费参考刷新失败，仍可生成日报；参考列沿用有日期缓存或待核：'+str(fee_error)[:230])
                 api = CNEquityFuturesAPI(CNE_CONFIG)
                 report = generate(api, fund_per_100m=fund, require_complete=strict,
                                   tushare_token=token)
@@ -207,14 +250,20 @@ with tab1:
         keyword = st.text_input('合约/品种搜索',placeholder='rb / 豆粕 / lc2701 / IF')
         rows = report['main_records'] if only_main else report['records']
         rows = [r for r in rows if r['exchange'] in selected_market and (not keyword or keyword.lower() in (r['contract']+r['variety_name']+r['variety']).lower())]
-        st.markdown('#### 主力合约成本速查：先锋最新已保存手续费 + 保证金参考')
-        st.info('★ **新增：先锋开户默认手续费/手（PDF）**。费率按公司最新已保存的默认 PDF 提取；固定收费直接显示，比例收费按报告结算价×合约乘数换算。与“开仓/手（含本地覆盖）”分列，平今费仍须单独核验。')
+        st.markdown('#### 逐合约收费对照：交易所开仓参考｜先锋默认｜毛差｜倍数')
+        st.info('**新增：交易所逐合约开仓、平昨、平今参考手续费**，直接放在先锋默认手续费旁，并计算每手理论毛差及收费倍数。两者都用同一结算价换算。交易所为第三方参考、先锋为开户默认，两者不等同客户真实收费；毛差不等同利润。')
         st.warning('【历史参考补齐】交易所历史数据为 2026年7–8月旧档；先锋公司历史公开基准为2026年3月20日发布。旧保证金率与报告日结算价相乘的金额仅是情景估算，不是今天交易所或公司实际保证金。请以结算单/交易所及公司当日核定值为准。')
         st.caption(f'开仓默认收费参考先锋 {_FEE_VERSION} PDF；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
         show_fields = [
           ('exchange_name','交易所'), ('variety_name','品种'), ('contract','具体主力合约'),
           ('settlement','结算价'),
+          ('exchange_fee_reference_display','交易所开仓/手（第三方参考）'),
           ('company_default_fee_display','★先锋默认手续费/手（PDF）'),
+          ('broker_minus_exchange_display','先锋-交易所参考毛差/手'),
+          ('broker_over_exchange_display','先锋/交易所参考倍数'),
+          ('exchange_fee_reference_close_yesterday','交易所平昨/手（参考）'),
+          ('exchange_fee_reference_close_today','交易所平今/手（参考）'),
+          ('exchange_fee_reference_status','交易所费更新日期/口径'),
           ('company_default_fee_rule','先锋默认收费规则'),
           ('company_default_fee_version','PDF更新日期'),
           ('display_exchange_margin_long_pct','展示交易所保证金率（含历史）'),
@@ -256,7 +305,7 @@ with tab1:
         if not view:
             st.warning('当前筛选下没有可展示的合约。请切换「全部合约」、取消搜索筛选或展开数据源诊断。')
         st.dataframe(view, use_container_width=True, hide_index=True, height=580)
-        st.caption(f'最左侧的新手续费列来自先锋已保存的 {_FEE_VERSION} PDF，不含保障基金，按结算价估算；账户覆盖值在后续“开仓/手”列。最前面的“展示保证金”四列依次选择当日报表参数→公开参考→历史旧档；每个数字自带状态或旧档日期。正式当日核验字段不被覆盖。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；金额仅为情景估算，不能直接对客。')
+        st.caption(f'交易所费参考源：AKShare futures_comm_info/九期网，单边开仓/平昨/平今对应的同合约第三方口径；毛差与倍数仅供分析，不可当公司净利润。先锋开户默认费来自 {_FEE_VERSION} PDF，不含保障基金，按结算价估算；账户覆盖值在后续“开仓/手”列。最前面的“展示保证金”四列依次选择当日报表参数→公开参考→历史旧档；每个数字自带状态或旧档日期。正式当日核验字段不被覆盖。历史资料：交易所2026年7–8月、先锋公司公开参数2026年3月；金额仅为情景估算，不能直接对客。')
         st.caption('* 平昨参考值仅为同默认单边费率假设；不保证实际平昨费率相同。表中所有费用为**每一手**、假设开平都在相同结算价成交；账户差异化费率以实际交易结算单为准。')
         with st.expander('按客户实际成交价模拟开仓/平仓成本（不录入客户信息）'):
             if rows:
@@ -308,12 +357,12 @@ with tab1:
                 file_name='futures_cost_'+report['price_date'].replace('-','')+suffix+'.zip',
                 mime='application/zip',use_container_width=True)
         st.caption('工作台本机保存位置：'+st.session_state['directory'])
-        st.caption('手续费来源：先锋最新已保存开户默认 PDF；固定元/手或成交金额比例计费，客户账户实际收取及平今规则另核。行情来源：CNEquity 开源期货湖；交易所核验保证金：结算参数/同日核验 CSV；CZCE/DCE 免费备用仅供参考；先锋历史公告加点仅作情景估算；公司实际保证金：当日公司核验文件或核实的账户设置。')
+        st.caption('交易所手续费参考来自 AKShare / 九期网，可能跨交易日且合约差异显著；比对列绝不代表真实客户佣金收入。手续费来源：先锋最新已保存开户默认 PDF；固定元/手或成交金额比例计费，客户账户实际收取及平今规则另核。行情来源：CNEquity 开源期货湖；交易所核验保证金：结算参数/同日核验 CSV；CZCE/DCE 免费备用仅供参考；先锋历史公告加点仅作情景估算；公司实际保证金：当日公司核验文件或核实的账户设置。')
     else:
         st.markdown('#### 当前尚未生成日报')
         st.info('点击「免费更新并生成真实日报」会初始化/更新独立 CNEquity 期货湖，再展示具体主力合约；首次需下载上游行情，若受限流，查看上方日志。演示按钮始终不联网。')
         st.markdown('#### 你将看到什么？')
-        st.markdown('点击后默认显示各品种的具体主力合约、结算价、开仓/平昨/平今一手手续费、隔夜/日内往返手续费以及保证金；平今无确认值显示待核。支持按成交价与手数模拟核算。')
+        st.markdown('点击后默认显示具体主力合约的交易所开仓/平昨/平今第三方参考手续费、先锋默认手续费、理论毛差及倍数、保证金与开平成本；第三方未覆盖的具体合约仍标为待核。')
 
     with st.expander('查看本机以前保存的真实日报（无需重新联网）'):
         from core import OUT
