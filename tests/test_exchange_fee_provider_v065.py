@@ -157,3 +157,9 @@ def test_streamlit_primary_columns_and_local_refresh_control_exist():
     assert "('company_default_fee_display','★先锋默认手续费/手（PDF）')" in app
     assert app.index("('exchange_fee_reference_display','交易所开仓/手（第三方参考）')") < app.index("('company_default_fee_display','★先锋默认手续费/手（PDF）')")
     assert '更新六市场交易所手续费参考（联网）' in app
+
+
+def test_display_amounts_use_standard_half_up_not_binary_bankers_rounding():
+    from exchange_fee_provider import _as_money
+    assert _as_money(19.275)=='¥19.28/手'
+    assert _as_money(134.925)=='¥134.93/手'

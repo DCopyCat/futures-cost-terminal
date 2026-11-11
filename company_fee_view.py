@@ -1,6 +1,6 @@
 """Human-readable brokerage fee tariff labels; amounts are computed by core."""
 from __future__ import annotations
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 def format_company_fee_rule(kind: str | None, raw_value: object) -> str:
@@ -29,4 +29,5 @@ def make_company_default_fee_display(amount: float | None, rule: str, version: s
     if amount is None:
         return '待核（缺结算价/乘数）'
     stamp = f'（PDF {version}）' if version and version != '未知' else '（PDF日期待核）'
-    return f'¥{amount:,.2f}/手{stamp}'
+    rounded=Decimal(str(amount)).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP)
+    return f'¥{rounded:,.2f}/手{stamp}'

@@ -15,6 +15,7 @@ import math
 import os
 import re
 import tempfile
+from decimal import Decimal, ROUND_HALF_UP
 from collections import defaultdict
 from datetime import datetime, date, timezone
 from pathlib import Path
@@ -196,8 +197,14 @@ def amount_for_side(record:dict, side:str, notional:float|None)->float|None:
     return round(amount,4)
 
 
+def _money_text(value:float)->str:
+    # Conventional half-up display for customer-facing RMB (base remains 4dp).
+    rounded=Decimal(str(value)).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP)
+    return f'{rounded:,.2f}'
+
+
 def _as_money(value:float|None)->str:
-    return f'¥{value:,.2f}/手' if value is not None else '待核'
+    return f'¥{_money_text(value)}/手' if value is not None else '待核'
 
 
 def _side_rule(record:dict, side:str)->str:
@@ -249,7 +256,7 @@ def compare_exchange_vs_broker(rows:list[dict], exchange:str, contract:str,
     if broker_default is not None and open_amount is not None:
         diff=round(broker_default-open_amount,4)
         out['broker_minus_exchange_open']=diff
-        out['broker_minus_exchange_display']=f'¥{diff:,.2f}/手（仅毛差）'
+        out['broker_minus_exchange_display']=f'¥{_money_text(diff)}/手（仅毛差）'
         if open_amount>0:
             mult=round(broker_default/open_amount,4)
             out['broker_over_exchange_multiple']=mult
