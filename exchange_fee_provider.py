@@ -125,7 +125,10 @@ def write_snapshot(path: Path, rows: list[dict]) -> None:
 
 def load_snapshot(path: Path) -> list[dict]:
     path=Path(path)
-    if not path.is_file():return []
+    if not path.is_file():
+        backup=path.parent/'exchange_fee_seed_20261110.csv'
+        if not backup.is_file():return []
+        path=backup
     try:
         with path.open(encoding='utf-8-sig',newline='') as f:
             reader=csv.DictReader(f)

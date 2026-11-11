@@ -136,3 +136,16 @@ def test_stale_source_date_is_explicitly_labeled():
     newer=normalize_reference_rows([fake(updated='2026-11-12 08:00:00')])
     ref=compare_exchange_vs_broker(newer,'DCE','j2701','20261110',192750,134.925)
     assert '晚于报告日' in ref['exchange_fee_reference_status']
+
+
+def test_dated_public_seed_is_not_misrepresented_as_live():
+    data=Path(__file__).resolve().parents[1]/'data'
+    rows=load_snapshot(data/'exchange_fee_reference.csv')
+    assert len(rows)>=32
+    j=compare_exchange_vs_broker(rows,'DCE','j2701','20261111',192750,134.925)
+    assert j['exchange_fee_reference_open']==19.275
+    assert j['exchange_fee_reference_status'].startswith('第三方参考 2026-11-10')
+    ad=compare_exchange_vs_broker(rows,'SHFE','ad2701','20261111',222400,55.6)
+    assert ad['exchange_fee_reference_open']==11.12
+    assert ad['exchange_fee_reference_close_today']==0
+    assert sum(r['exchange']=='CFFEX' for r in rows)>=8

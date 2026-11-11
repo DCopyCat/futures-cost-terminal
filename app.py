@@ -85,7 +85,7 @@ with tab1:
             except Exception as err:
                 st.warning('第三方数据更新失败（不清除已有缓存）：'+str(err)[:280])
         exchange_fee_rows=load_snapshot(_EXCHANGE_FEE_PATH)
-        st.write(f'本机已有第三方交易所手续费参考：{len(exchange_fee_rows)} 个具体合约；来源：{SOURCE_NAME}')
+        st.write(f'本机有第三方手续费参考：{len(exchange_fee_rows)} 个具体合约；如未联网成功，使用2026-11-10历史快照；实时接口：{SOURCE_NAME}')
         _broker_rows=_load_csv(DATA/'company_fees.csv')
         _version=max((r.get('effective_from','') for r in _broker_rows),default='')
         _broker_rows=[r for r in _broker_rows if r.get('effective_from','')==_version]
