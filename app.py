@@ -63,10 +63,10 @@ with tab1:
         if fee_catalog:
             st.dataframe(fee_catalog,hide_index=True,use_container_width=True,height=350)
             buffer=io.StringIO(newline='')
-            writer=csv.DictWriter(buffer,fieldnames=list(fee_catalog[0]),lineterminator='\\n')
+            writer=csv.DictWriter(buffer,fieldnames=list(fee_catalog[0]),lineterminator='\n')
             writer.writeheader();writer.writerows(fee_catalog)
             st.download_button('↓ 下载先锋默认手续费88品种CSV',
-                               data=('\\ufeff'+buffer.getvalue()).encode('utf-8'),
+                               data=('\ufeff'+buffer.getvalue()).encode('utf-8'),
                                file_name='先锋开户默认手续费_'+current_fee_version+'.csv',
                                mime='text/csv')
         else:
