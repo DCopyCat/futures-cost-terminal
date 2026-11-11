@@ -246,7 +246,7 @@ def compare_exchange_vs_broker(rows:list[dict], exchange:str, contract:str,
     if broker_default is not None and open_amount is not None:
         diff=round(broker_default-open_amount,4)
         out['broker_minus_exchange_open']=diff
-        out['broker_minus_exchange_display']=f'¥{diff:+,.2f}/手（仅毛差）'
+        out['broker_minus_exchange_display']=f'¥{diff:,.2f}/手（仅毛差）'
         if open_amount>0:
             mult=round(broker_default/open_amount,4)
             out['broker_over_exchange_multiple']=mult
