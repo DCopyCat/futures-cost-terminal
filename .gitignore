@@ -32,3 +32,4 @@ data/exchange_margin_*.csv
 Thumbs.db
 .vscode/
 .idea/
+\n# Third-party dated exchange fee cache\ndata/exchange_fee_reference.csv\n

@@ -62,6 +62,19 @@ COLUMNS = [
     ("margin_reference_source", "参考数据来源"),
     ("company_notice_reference_source", "公司公告参考来源"),
     ("company_margin_source", "公司保证金核验来源"),
+    ("exchange_fee_reference_display", "交易所开仓参考手续费/手（第三方）"),
+    ("exchange_fee_reference_open", "交易所开仓参考费/手(元)"),
+    ("exchange_fee_reference_close_yesterday", "交易所平昨参考费/手(元)"),
+    ("exchange_fee_reference_close_today", "交易所平今参考费/手(元)"),
+    ("exchange_fee_reference_open_rule", "交易所开仓参考规则"),
+    ("exchange_fee_reference_close_today_rule", "交易所平今参考规则"),
+    ("exchange_fee_reference_updated", "交易所费第三方更新日期"),
+    ("exchange_fee_reference_status", "交易所费参考核验状态"),
+    ("exchange_fee_reference_source", "交易所费参考来源URL"),
+    ("broker_minus_exchange_open", "先锋默认减交易所开仓参考毛差/手(元)"),
+    ("broker_minus_exchange_display", "先锋与交易所参考开仓费毛差"),
+    ("broker_over_exchange_multiple", "先锋默认/交易所开仓参考倍数"),
+    ("broker_over_exchange_display", "先锋默认费对交易所费倍数（参考）"),
     ("company_default_fee_display", "★先锋开户默认手续费/手（PDF）"),
     ("company_default_fee_amount", "先锋PDF默认手续费金额/手(元)"),
     ("company_default_fee_rule", "先锋PDF默认手续费规则"),
@@ -414,6 +427,8 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
     contract_info = {(x['exchange'], x['variety'].lower()): x for x in _load_csv(DATA / 'contracts.csv')}
     company_rows, company_version = _company_fees_for_day(snap)
     company = {(x['exchange'], x['variety'].lower()): x for x in company_rows}
+    from exchange_fee_provider import load_snapshot, SNAPSHOT_NAME
+    exchange_fee_references = load_snapshot(DATA / SNAPSHOT_NAME)
     company_ov = _load_csv(DATA / 'company_overrides.csv')
     try:
         from parameter_import import load_company_margin
@@ -643,8 +658,12 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
     # beside the contract instead of hidden behind dozens of columns.
     # Audited exchange/company rates above remain unchanged (None if missing).
     from margin_display import enrich_margin_display
+    from exchange_fee_provider import compare_exchange_vs_broker
     for record in result:
         record.update(enrich_margin_display(record))
+        record.update(compare_exchange_vs_broker(
+            exchange_fee_references, record['exchange'], record['contract'],
+            snap, record['notional'], record['company_default_fee_amount']))
     return {
         'created_at_bjt': now.astimezone(TZ).isoformat(timespec='seconds'),
         'report_date': now.astimezone(TZ).date().isoformat(),
@@ -660,6 +679,8 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         'fund_rate_per_100m': fund_per_100m,
         'company_baseline': f'先锋期货开户默认手续费PDF（更新日期：{company_version}）；非账户级标准',
         'company_baseline_version': company_version,
+        'exchange_fee_reference_contracts':len(exchange_fee_references),
+        'exchange_fee_reference_varieties':len({(r['exchange'],r['variety']) for r in exchange_fee_references}),
         'unresolved_main': [{'exchange': market, 'variety': var} for market, var in unresolved_main],
         'records': result,
         'main_records': [r for r in result if r['is_main']=='是'],
@@ -684,7 +705,14 @@ def _html_report(report: dict) -> bytes:
         ('exchange_name', '交易所'), ('variety_name', '品种'), ('contract', '具体主力合约'),
         ('open_interest', '持仓量'), ('settlement', '结算价'), ('multiplier', '合约乘数'),
         ('notional', '一手名义价值'),
+        ('exchange_fee_reference_display', '交易所开仓/手（第三方参考）'),
         ('company_default_fee_display', '★先锋默认手续费/手（PDF）'),
+        ('broker_minus_exchange_display', '先锋-交易所参考毛差/手'),
+        ('broker_over_exchange_display', '先锋/交易所参考倍数'),
+        ('exchange_fee_reference_close_yesterday', '交易所平昨/手（参考）'),
+        ('exchange_fee_reference_close_today', '交易所平今/手（参考）'),
+        ('exchange_fee_reference_open_rule', '交易所开仓参考计费规则'),
+        ('exchange_fee_reference_status', '交易所费数据时间/口径'),
         ('company_default_fee_rule', '先锋收费规则'),
         ('company_default_fee_version', 'PDF更新日期'),
         ('display_exchange_margin_long_pct', '展示交易所保证金率（含历史）'),
@@ -733,7 +761,7 @@ def _html_report(report: dict) -> bytes:
 <style>:root{{--ink:#162b43;--muted:#66778c;--line:#dae2eb}}body{{font-family:system-ui,"Microsoft YaHei",sans-serif;color:var(--ink);margin:30px;background:#f5f8fc}}main{{background:white;padding:28px;border-radius:15px}}h1{{margin:0 0 8px;font-size:25px}}p{{color:var(--muted)}}.stats{{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}}.stat{{border:1px solid var(--line);padding:12px 20px;border-radius:12px}}.stat b{{display:block;font-size:19px}}.warning{{padding:12px;background:#fff4e6;border:1px solid #f0d1a5;border-radius:9px;margin:18px 0}}.wrap{{overflow:auto;max-height:75vh;border:1px solid var(--line);border-radius:10px}}table{{border-collapse:collapse;font-size:12px;width:100%}}.full table{{min-width:2900px}}th,td{{text-align:left;border-bottom:1px solid #ebeff4;padding:9px 11px;white-space:nowrap}}th.company-fee-primary{{background:#dceafe;color:#113f76}}td.company-fee-primary{{background:#edf4ff;color:#113f76;font-weight:750}}thead th{{position:sticky;top:0;background:#e8f0fa;z-index:3}}tr.warn td{{color:#815d20}}tr:hover{{background:#f7faff}}footer{{margin-top:28px;color:var(--muted);font-size:12px}}button{{cursor:pointer;background:white;color:#28466b;border:1px solid #ccd9e6;border-radius:8px;padding:10px 15px;margin:0 8px 12px 0}}button.active{{background:#163a61;color:white}}@media print{{body{{margin:0;background:white}}.wrap{{max-height:none;overflow:visible}}table{{font-size:9px}}.full,button{{display:none!important}}}}</style></head><body><main>
 <h1>期货手续费与保证金每日核验报告</h1><p><strong>软件版本：{esc(build_version)}</strong>｜<strong>先锋开户默认手续费基准：{esc(report['company_baseline_version'])} PDF</strong>｜默认按品种显示持仓量最大的具体主力合约。展示保证金优先采用当日报表参数；缺失时可显示公开参考或历史旧档并注明日期，<strong>历史参考≠今日应缴保证金</strong>。本 HTML 是生成时的静态快照，更新软件后须重新生成报告。</p>
 <div class="stats"><div class="stat">生成日<b>{esc(report['report_date'])}</b></div><div class="stat">基准结算日<b>{esc(report['price_date'])}</b></div><div class="stat">行情完整性<b>{esc(report['status'])}</b></div><div class="stat">有效合约数<b>{len(report['records'])}</b></div><div class="stat">主力合约数<b>{len(report['main_records'])}</b></div><div class="stat">无法判定主力的品种<b>{unresolved}</b></div></div>
-<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>★先锋默认手续费</strong>直接取对应品种 PDF 的单边“交易手续费”，按该结算价估算每手金额；不代表客户账户最终费率，也不能单凭此列推定平今收费。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。<strong>*保证金公开参考</strong>不是当日已核验交易所或公司收费，先锋历史公告加点不保证今天或某客户仍适用。<strong>历史保证金数字</strong>来自2026年3至8月的旧档案，和本日报当前结算价结合计算出的金额只是情景示例，绝非今日应缴金额。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
+<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>交易所费参考</strong>取 AKShare futures_comm_info / 九期网的具体合约参考数据并按本报告结算价重新算一手金额；其更新时间可能晚于或早于报告结算日，不代表官方交易所结算核定值。<strong>毛差/倍数</strong>仅为先锋开户默认费减去第三方交易所参考费的理论对比，不是期货公司的净利润、真实佣金收入或客户账户结算费。<strong>★先锋默认手续费</strong>直接取对应品种 PDF 的单边“交易手续费”，按该结算价估算每手金额；不代表客户账户最终费率，也不能单凭此列推定平今收费。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。<strong>*保证金公开参考</strong>不是当日已核验交易所或公司收费，先锋历史公告加点不保证今天或某客户仍适用。<strong>历史保证金数字</strong>来自2026年3至8月的旧档案，和本日报当前结算价结合计算出的金额只是情景示例，绝非今日应缴金额。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
 <button id="mainbtn" class="active" onclick="toggle('main')">具体主力合约（默认）</button><button id="allbtn" onclick="toggle('all')">全部合约（核验用）</button>
 <section id="main" class="main">{main_table}</section><section id="all" class="full" style="display:none">{all_table}</section>
 <footer>本报告不等于客户实际交易费用；一手开平手续费分别计算。隔夜开平=开仓+平昨；日内开平=开仓+平今；含基金合计额外加双边基金，全部以同一结算价假设开平。保证金=结算价×合约乘数×保证金率。夜盘归属下一交易日。生成于北京时间 {esc(report['created_at_bjt'])}。</footer></main>
