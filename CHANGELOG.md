@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.6-rc1 — 2026-11-13
+
+- Added the four CZCE SO sunflower-oil futures launch contracts (SO2705/2707/2709/2711); 20 tonnes/lot, RMB 1/ton tick, RMB 20/tick; exchange launch margin reference 8%, launch day bands ±7% (first day ±14%).
+- Source-backed official listing open / ordinary close / close-today exchange fee one ten-thousandth. Exchange fee is never copied into the broker default; SO remains broker fee and broker margin pending until Pioneer confirms.
+- SO visible in offline listing/catalogues even without CNEquity market data; no fabricated settlement price, OI, or continuous contract. Existing 88-product 2026-11-02 broker PDF unchanged.
+- Unit tests for effective date, proper contract size, 4-contract scope, official fee calculation and no pre-launch backfilling.
+
+
 ## [0.6.0-rc1] - 2026-11-09
 
 - Prefer incremental derivatives daily update after initial small-window backfill; retain manual short-window repair without bypassing upstream limits.

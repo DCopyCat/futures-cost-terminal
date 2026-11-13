@@ -53,24 +53,48 @@ with tab1:
     with c:
         fund = st.number_input("保障基金：亿分之", min_value=0.0, max_value=1000.0, value=9.0, step=1.0,
                                help="依据先锋期货2026-11-02更新PDF：成交金额的亿分之九。与公司最新通知核对")
+    with st.expander('🌻 SO葵花籽油：2026-11-12上市参数与四个首批合约（官方公告）',expanded=True):
+        from so_listing import (listing_contract_rows, FIRST_DAY_REFERENCE_PRICE,
+            MULTIPLIER as SO_MULTIPLIER, EXCHANGE_INITIAL_MARGIN_PCT as SO_MARGIN,
+            EXCHANGE_FEE_PERMYRIAD as SO_FEE, FEE_ANNOUNCEMENT_URL,
+            LISTING_ANNOUNCEMENT_URL)
+        so_rows=listing_contract_rows()
+        st.caption('郑商所正式上市资料：SO2705 / SO2707 / SO2709 / SO2711；20吨/手，最小跳动1元/吨、每跳20元；初始交易所保证金8%，一般开仓和平今手续费均为成交金额万分之1。11月12日上市初期涨跌停板7%（首日14%）。')
+        st.dataframe([{
+            '上市合约':r['contract'], '上市日':r['listed_at'],
+            '交易单位':f"{r['multiplier']:g}吨/手",
+            '每跳盈亏':f"{r['value_per_tick']:g}元/手",
+            '交易所挂牌保证金':f"{r['exchange_margin_listing_pct']:g}%（挂牌参考）",
+            '交易所开仓':f"万分之{r['exchange_open_fee_permyriad']:g}",
+            '交易所平今':f"万分之{r['exchange_close_today_fee_permyriad']:g}",
+            '先锋默认手续费':r['broker_default_fee_status'],
+            '先锋公司保证金':r['broker_margin_status'],
+        } for r in so_rows],hide_index=True,use_container_width=True)
+        st.info(f'SO 挂牌基准价 {FIRST_DAY_REFERENCE_PRICE:,.0f} 元/吨的**演算**：名义价值 ¥{FIRST_DAY_REFERENCE_PRICE*SO_MULTIPLIER:,.0f}/手，交易所挂牌保证金参考 ¥{FIRST_DAY_REFERENCE_PRICE*SO_MULTIPLIER*SO_MARGIN/100:,.0f}/手，交易所开仓参考 ¥{FIRST_DAY_REFERENCE_PRICE*SO_MULTIPLIER*SO_FEE/10000:,.2f}/手。挂牌基准价不是2026-11-12的实际结算价。公司收费必须另行核实。')
+        st.markdown(f'[郑商所上市公告（转载）]({LISTING_ANNOUNCEMENT_URL}) | [郑商所手续费正式通知]({FEE_ANNOUNCEMENT_URL})')
     with st.expander('📋 先锋期货开户默认手续费完整基准（离线可查）',expanded=False):
         all_company_fees = _load_csv(DATA/'company_fees.csv')
         versions = sorted({str(r.get('effective_from','')) for r in all_company_fees if r.get('effective_from')})
         current_fee_version = versions[-1] if versions else '未知'
         default_rows = [r for r in all_company_fees if r.get('effective_from') == current_fee_version]
-        st.caption(f'已保存的最新公司默认手续费 PDF：{current_fee_version}；共 {len(default_rows)} 条。固定收费单位为元/手，比例收费需乘以成交金额；不含亿分之九保障基金。不是客户账户实际费率或独立平今标准。')
+        st.caption(f'已保存的先锋默认手续费 PDF：{current_fee_version}；含 {len(default_rows)} 条已核实旧品种。SO是2026-11-12新上市品种，未纳入此PDF，须另核公司收费。固定元/手或按成交金额比例收费，均不含保障基金。')
         fee_catalog = [{
             '交易所': MARKETS.get(r['exchange'],r['exchange']),
             '品种': r.get('variety_name',''), '代码': r['variety'],
             '★先锋开户默认单边收费规则': format_company_fee_rule(r.get('open_fee_type'),r.get('open_fee_value')),
             'PDF更新日期': r.get('effective_from','')
         } for r in default_rows]
+        fee_catalog.append({
+            '交易所':'郑商所','品种':'葵花籽油','代码':'so',
+            '★先锋开户默认单边收费规则':'待核（SO 2026-11-12上市，旧PDF无此品种）',
+            'PDF更新日期':'待核',
+        })
         if fee_catalog:
             st.dataframe(fee_catalog,hide_index=True,use_container_width=True,height=350)
             buffer=io.StringIO(newline='')
             writer=csv.DictWriter(buffer,fieldnames=list(fee_catalog[0]),lineterminator='\n')
             writer.writeheader();writer.writerows(fee_catalog)
-            st.download_button('↓ 下载先锋默认手续费88品种CSV',
+            st.download_button('↓ 下载先锋默认手续费88品种+SO待核清单CSV',
                                data=('\ufeff'+buffer.getvalue()).encode('utf-8'),
                                file_name='先锋开户默认手续费_'+current_fee_version+'.csv',
                                mime='text/csv')
@@ -89,6 +113,9 @@ with tab1:
         _broker_rows=_load_csv(DATA/'company_fees.csv')
         _version=max((r.get('effective_from','') for r in _broker_rows),default='')
         _broker_rows=[r for r in _broker_rows if r.get('effective_from','')==_version]
+        if not any(r.get('exchange')=='CZCE' and r.get('variety')=='so' for r in _broker_rows):
+            _broker_rows.append({'exchange':'CZCE','variety':'so','variety_name':'葵花籽油',
+                                 'open_fee_type':'','open_fee_value':'','effective_from':'待核'})
         _cat=variety_catalog(exchange_fee_rows,_broker_rows)
         _catalog=[{
             '交易所':MARKETS.get(c['exchange'],c['exchange']),
@@ -251,7 +278,7 @@ with tab1:
         rows = report['main_records'] if only_main else report['records']
         rows = [r for r in rows if r['exchange'] in selected_market and (not keyword or keyword.lower() in (r['contract']+r['variety_name']+r['variety']).lower())]
         st.markdown('#### 逐合约收费对照：交易所开仓参考｜先锋默认｜毛差｜倍数')
-        st.info('**新增：交易所逐合约开仓、平昨、平今参考手续费**，直接放在先锋默认手续费旁，并计算每手理论毛差及收费倍数。两者都用同一结算价换算。交易所为第三方参考、先锋为开户默认，两者不等同客户真实收费；毛差不等同利润。')
+        st.info('**SO葵花籽油已按郑商所2026-11-12首批四个合约接入**，交易所挂牌费率采用郑商所正式通知，上市保证金8%作带日期参考；公司费率、公司保证金待核。其余品种按第三方参考比对。**新增：交易所逐合约开仓、平昨、平今参考手续费**，直接放在先锋默认手续费旁，并计算每手理论毛差及收费倍数。两者都用同一结算价换算。交易所为第三方参考、先锋为开户默认，两者不等同客户真实收费；毛差不等同利润。')
         st.warning('【历史参考补齐】交易所历史数据为 2026年7–8月旧档；先锋公司历史公开基准为2026年3月20日发布。旧保证金率与报告日结算价相乘的金额仅是情景估算，不是今天交易所或公司实际保证金。请以结算单/交易所及公司当日核定值为准。')
         st.caption(f'开仓默认收费参考先锋 {_FEE_VERSION} PDF；平昨仅按同一默认单边费率假设，需向公司核实。平今没有经确认的单独标准时显示「待核」，不能等同开仓费；往返费用包含两次成交的保障基金。')
         show_fields = [

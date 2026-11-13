@@ -229,7 +229,15 @@ def compare_exchange_vs_broker(rows:list[dict], exchange:str, contract:str,
          'exchange_fee_reference_source':'','broker_minus_exchange_open':None,
          'broker_minus_exchange_display':'待核','broker_over_exchange_multiple':None,
          'broker_over_exchange_display':'待核'}
-    ref=_contract_match(rows,exchange,contract)
+    from so_listing import official_exchange_fee_record, FIRST_LISTED, ANNOUNCEMENT_DATE
+    is_so_symbol = (str(exchange).upper()=='CZCE' and str(contract).lower().startswith('so'))
+    report_key=str(report_date).replace('-','').replace('/','')[:8]
+    # Do not backdate a fee to before listing, nor use the third-party SO quote
+    # to supersede the explicit initial CZCE published fee for its four launches.
+    if is_so_symbol and report_key < FIRST_LISTED:
+        return out
+    official = official_exchange_fee_record(exchange, contract, report_date)
+    ref = official if official is not None else _contract_match(rows,exchange,contract)
     if ref is None:return out
     date_text=ref.get('fee_updated_at','')
     report_day = _date_of(report_date.replace('/','-'))
@@ -240,14 +248,18 @@ def compare_exchange_vs_broker(rows:list[dict], exchange:str, contract:str,
             if difference>3:extra='；早于报告日'
             if difference<0:extra='；晚于报告日'
         except ValueError:pass
-    status='第三方参考 '+(date_text or '日期未知')+extra
+    status=('郑商所挂牌费率公告 '+ANNOUNCEMENT_DATE+'（2026-11-12起；后续变更待核）'
+            if official is not None else '第三方参考 '+(date_text or '日期未知')+extra)
     open_amount=amount_for_side(ref,'open',notional)
     close_y=amount_for_side(ref,'close_yesterday',notional)
     close_t=amount_for_side(ref,'close_today',notional)
     out.update(exchange_fee_reference_open=open_amount,
                exchange_fee_reference_close_yesterday=close_y,
                exchange_fee_reference_close_today=close_t,
-               exchange_fee_reference_display=_as_money(open_amount)+f'（参考{date_text or "日期待核"}）' if open_amount is not None else '待核（缺金额/结算价）',
+               exchange_fee_reference_display=(_as_money(open_amount)+
+                    ('（郑商所挂牌公告 2026-11-06）' if official is not None
+                     else f'（第三方参考{date_text or "日期待核"}）'))
+                    if open_amount is not None else '待核（缺金额/结算价）',
                exchange_fee_reference_open_rule=_side_rule(ref,'open'),
                exchange_fee_reference_close_today_rule=_side_rule(ref,'close_today'),
                exchange_fee_reference_updated=date_text,
@@ -277,10 +289,17 @@ def variety_catalog(rows:list[dict], broker_rows:list[dict]) -> list[dict]:
         rule_label=(next(iter(rule_names)) if len(rule_names)==1
                     else '不同合约费率有差异；按合约核验' if refs else '待核')
         latest=max((x['fee_updated_at'] for x in refs if x.get('fee_updated_at')),default='')
+        ref_count=len(refs)
+        if ex=='CZCE' and var=='so':
+            # Published initial CZCE rate, irrespective of third-party coverage.
+            from so_listing import EXCHANGE_FEE_PERMYRIAD, ANNOUNCEMENT_DATE, INITIAL_CONTRACTS
+            rule_label=f'万分之{EXCHANGE_FEE_PERMYRIAD:g}（郑商所挂牌公告）'
+            latest=ANNOUNCEMENT_DATE
+            ref_count=len(INITIAL_CONTRACTS)
         result.append({'exchange':ex,'variety':var,'variety_name':row.get('variety_name',''),
                        'exchange_open_rule':rule_label,
                        'exchange_fee_update':latest,
-                       'reference_contracts':len(refs),
+                       'reference_contracts':ref_count,
                        'broker_default_type':row.get('open_fee_type'),
                        'broker_default_value':row.get('open_fee_value'),
                        'broker_date':row.get('effective_from')})

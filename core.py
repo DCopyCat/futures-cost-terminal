@@ -490,6 +490,13 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         # Public reference values are deliberately separate from confirmed margin.
         reference_long = params.get('long') if reference_only else None
         reference_short = params.get('short') if reference_only else None
+        # SO's published 8% LAUNCH margin applies to the first four contracts,
+        # but is a labelled historical listing reference, never an audited daily rate.
+        from so_listing import is_initial_so_contract, EXCHANGE_INITIAL_MARGIN_PCT, LISTING_ANNOUNCEMENT_URL
+        so_listing_reference = is_initial_so_contract(market, sym, snap)
+        if so_listing_reference and (ex_long is None or ex_short is None):
+            if ex_long is None: reference_long = EXCHANGE_INITIAL_MARGIN_PCT
+            if ex_short is None: reference_short = EXCHANGE_INITIAL_MARGIN_PCT
         manual_margin_applied = False
         for key,side in (('exchange_margin_long_pct','long'),('exchange_margin_short_pct','short')):
             val = _as_float(ex_override.get(key))
@@ -518,6 +525,9 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
                         if notice_base_short is not None and notice_points is not None
                         and notice_base_short + notice_points <= 100 else None)
         margin_reference_source = params.get('origin', '') if reference_only else ''
+        if so_listing_reference and (ex_long is None or ex_short is None):
+            margin_reference_source = ('郑商所2026-11-06挂牌公告：初始交易保证金8%，'
+                                      '非本日结算核验；后续调整需复核；' + LISTING_ANNOUNCEMENT_URL)
         notice_source = (f'先锋历史公开公告 {SOURCE_DATE}：加收 {notice_points} 个百分点；'
                          f'{SOURCE_ANNOUNCEMENT}；非本日确认值' if notice_points is not None else '')
         # Keep the company's 2026-11-02 (or newer imported) default tariff
@@ -526,7 +536,7 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         baseline_type = co.get('open_fee_type')
         baseline_value = co.get('open_fee_value')
         baseline_amount = _fee_value(baseline_type, baseline_value, notional)
-        baseline_version = co.get('effective_from') or company_version
+        baseline_version = co.get('effective_from') or (company_version if co else '待核')
         baseline_rule = format_company_fee_rule(baseline_type, baseline_value)
         baseline_display = make_company_default_fee_display(
             baseline_amount, baseline_rule, baseline_version)
