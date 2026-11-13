@@ -34,7 +34,52 @@ COLUMNS = [
     ("company_margin_long_pct", "公司多头保证金(%)"),
     ("company_margin_short_pct", "公司空头保证金(%)"),
     ("exchange_margin_one_lot", "交易所多头一手保证金(元)"),
+    ("display_exchange_margin_long_pct", "展示交易所保证金率(%；含历史标记)"),
+    ("display_exchange_margin_short_pct", "展示交易所空头保证金率(%；含历史标记)"),
+    ("display_exchange_margin_one_lot", "展示交易所一手保证金(元；含历史标记)"),
+    ("display_exchange_margin_status", "展示交易所保证金状态"),
+    ("display_exchange_margin_source", "展示交易所保证金来源"),
+    ("display_company_margin_long_pct", "展示公司保证金率(%；含历史标记)"),
+    ("display_company_margin_short_pct", "展示公司空头保证金率(%；含历史标记)"),
+    ("display_company_margin_one_lot", "展示公司一手保证金(元；含历史标记)"),
+    ("display_company_margin_status", "展示公司保证金状态"),
+    ("display_company_margin_source", "展示公司保证金来源"),
     ("company_margin_one_lot", "公司多头一手保证金(元)"),
+    ("historical_exchange_long_pct", "交易所历史保证金参考多头率(%)"),
+    ("historical_exchange_short_pct", "交易所历史保证金参考空头率(%)"),
+    ("historical_exchange_one_lot", "交易所历史参考一手估算金额(元)"),
+    ("historical_exchange_basis", "交易所历史保证金来源日期及范围"),
+    ("historical_exchange_source_url", "交易所历史参考URL"),
+    ("historical_company_long_pct", "先锋公开历史公司保证金参考多头率(%)"),
+    ("historical_company_short_pct", "先锋公开历史公司保证金参考空头率(%)"),
+    ("historical_company_one_lot", "先锋历史保证金参考一手估算金额(元)"),
+    ("historical_company_basis", "先锋历史公司保证金来源日期及范围"),
+    ("historical_company_source_url", "先锋历史保证金参考URL"),
+    ("exchange_margin_reference_long_pct", "公开保证金参考多头(%；非结算核验)"),
+    ("exchange_margin_reference_one_lot", "公开参考一手保证金(元)"),
+    ("company_margin_notice_reference_long_pct", "先锋历史公告推算多头参考率(%；非当日确认)"),
+    ("company_margin_notice_reference_one_lot", "先锋历史公告推算一手资金(元)"),
+    ("margin_reference_source", "参考数据来源"),
+    ("company_notice_reference_source", "公司公告参考来源"),
+    ("company_margin_source", "公司保证金核验来源"),
+    ("exchange_fee_reference_display", "交易所开仓参考手续费/手（第三方）"),
+    ("exchange_fee_reference_open", "交易所开仓参考费/手(元)"),
+    ("exchange_fee_reference_close_yesterday", "交易所平昨参考费/手(元)"),
+    ("exchange_fee_reference_close_today", "交易所平今参考费/手(元)"),
+    ("exchange_fee_reference_open_rule", "交易所开仓参考规则"),
+    ("exchange_fee_reference_close_today_rule", "交易所平今参考规则"),
+    ("exchange_fee_reference_updated", "交易所费第三方更新日期"),
+    ("exchange_fee_reference_status", "交易所费参考核验状态"),
+    ("exchange_fee_reference_source", "交易所费参考来源URL"),
+    ("broker_minus_exchange_open", "先锋默认减交易所开仓参考毛差/手(元)"),
+    ("broker_minus_exchange_display", "先锋与交易所参考开仓费毛差"),
+    ("broker_over_exchange_multiple", "先锋默认/交易所开仓参考倍数"),
+    ("broker_over_exchange_display", "先锋默认费对交易所费倍数（参考）"),
+    ("company_default_fee_display", "★先锋开户默认手续费/手（PDF）"),
+    ("company_default_fee_amount", "先锋PDF默认手续费金额/手(元)"),
+    ("company_default_fee_rule", "先锋PDF默认手续费规则"),
+    ("company_default_fee_version", "先锋PDF更新日期"),
+    ("company_default_fee_source", "先锋PDF默认收费来源"),
     ("company_fee_open", "客户开仓参考手续费/手(元)"),
     ("company_fee_close_yesterday", "客户平昨参考手续费/手(元)"),
     ("company_fee_close_today", "客户平今手续费/手(元;待核可为空)"),
@@ -46,6 +91,8 @@ COLUMNS = [
     ("overnight_round_trip_plus_fund", "隔夜一开一平含双边基金/手(元)"),
     ("day_round_trip_plus_fund", "日内一开一平含双边基金/手(元;待核可为空)"),
     ("fee_status", "手续费核验口径"),
+    ("margin_source", "交易所保证金数据来源"),
+    ("company_close_today_verified", "公司平今费核验状态"),
     ("company_fee_type", "公司开仓费计费方式"),
     ("company_fee_rule", "公司开仓费率规则值"),
     ("company_close_yesterday_fee_type", "平昨覆盖计费方式"),
@@ -226,10 +273,44 @@ def _fetch_settle(api: Any, snapshot_date: str, tushare_token: str = "", tushare
         except Exception as ex:
             params[market] = {}
             errs[market] = f"结算参数获取失败：{type(ex).__name__}: {str(ex)[:150]}"
+    # Separate exact-day reviewed CSV fallback. Do not accept historical
+    # or undocumented values as today's exchange margin.
+    try:
+        from parameter_import import load_exchange_margin
+        manual = load_exchange_margin(DATA, snapshot_date)
+        for market, contracts in manual.items():
+            for sym, record in contracts.items():
+                existing = params.setdefault(market, {}).get(sym, {})
+                # Explicit user-reviewed exact-day CSV is preferred when present.
+                params[market][sym] = {**existing, **record}
+            if contracts:
+                errs.pop(market, None)
+    except Exception as exc:
+        errs['manual_exchange_csv'] = f'人工保证金CSV读取失败：{type(exc).__name__}: {str(exc)[:160]}'
+    # Explicitly labelled non-authoritative public references. These are NOT
+    # settled exchange margin rates, and never override same-day verified values.
+    if getattr(api, 'enable_public_margin_reference', False):
+        from margin_reference import fetch_czce_reference, fetch_dce_reference
+        for market, fetcher in [('CZCE', fetch_czce_reference), ('DCE', fetch_dce_reference)]:
+            current = params.setdefault(market, {})
+            try:
+                fallback = fetcher(snapshot_date)
+                installed = 0
+                for sym, candidate in fallback.items():
+                    existing = current.get(sym) or {}
+                    if existing.get('long') is None and existing.get('short') is None:
+                        current[sym] = {**existing, **candidate}
+                        installed += 1
+                if installed:
+                    detail = f'{installed} 个合约仅取得公开参考值，非交易所结算核验'
+                    errs[market] = (errs.get(market, '') + '；' + detail).lstrip('；')
+            except Exception as exc:
+                detail = f'公开参考源不可用：{type(exc).__name__}: {str(exc)[:100]}'
+                errs[market] = (errs.get(market, '') + '；' + detail).lstrip('；')
     return params, errs
 
 
-def _latest_override(overrides: list[dict], market: str, var: str, contract: str, snapshot_date: str) -> Optional[dict]:
+def _latest_override(overrides: list[dict], market: str, var: str, contract: str, snapshot_date: str, *, exact_day: bool = False) -> Optional[dict]:
     candidates = []
     for row in overrides:
         if row.get('exchange', '').upper().strip() != market or row.get('variety', '').lower().strip() != var:
@@ -238,7 +319,9 @@ def _latest_override(overrides: list[dict], market: str, var: str, contract: str
         if specific and specific != contract:
             continue
         eff = _safe_date(row.get('effective_from'))
-        if eff and eff > snapshot_date:
+        if exact_day and eff != snapshot_date:
+            continue
+        if not exact_day and eff and eff > snapshot_date:
             continue
         score = (1 if specific else 0, eff)
         candidates.append((score, row))
@@ -344,7 +427,15 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
     contract_info = {(x['exchange'], x['variety'].lower()): x for x in _load_csv(DATA / 'contracts.csv')}
     company_rows, company_version = _company_fees_for_day(snap)
     company = {(x['exchange'], x['variety'].lower()): x for x in company_rows}
+    from exchange_fee_provider import load_snapshot, SNAPSHOT_NAME
+    exchange_fee_references = load_snapshot(DATA / SNAPSHOT_NAME)
     company_ov = _load_csv(DATA / 'company_overrides.csv')
+    try:
+        from parameter_import import load_company_margin
+        verified_company_margins = load_company_margin(DATA, snap)
+    except Exception as exc:
+        verified_company_margins = {}
+        settle_errs['company_margin_csv'] = f'公司当日保证金 CSV 不可用：{type(exc).__name__}: {str(exc)[:120]}'
     exchange_ov = _load_csv(DATA / 'exchange_overrides.csv')
     applicable = []
     for market, recs in daily.items():
@@ -366,21 +457,91 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         spec = contract_info.get((market, var)) or {}
         co = company.get((market, var)) or {}
         override = _latest_override(company_ov, market, var, sym, snap) or {}
-        ex_override = _latest_override(exchange_ov, market, var, sym, snap) or {}
+        # Exchange margin schedule must be confirmed for this *exact* trading day.
+        ex_override = _latest_override(exchange_ov, market, var, sym, snap, exact_day=True) or {}
+        manual_verified = (_safe_date(ex_override.get('verified_at')) <= now.astimezone(TZ).strftime('%Y%m%d')
+                           and len(_safe_date(ex_override.get('verified_at'))) == 8
+                           and bool(str(ex_override.get('source_note') or '').strip()))
+        if not manual_verified:
+            ex_override = {}
         m = _as_float(spec.get('multiplier'))
         price = x['settlement']
         notional = round(price * m, 4) if m else None
+        from historical_margin import historical_exchange_reference, historical_company_reference
+        # Historical snapshots are NEVER used to populate live/verified margin.
+        old_exchange = historical_exchange_reference(market, var, sym, DATA)
+        old_company = historical_company_reference(market, var, DATA)
+        old_exchange_long = old_exchange.get('long')
+        old_company_long = old_company.get('long')
+        old_exchange_money = _nullable_round(notional * old_exchange_long / 100, 2) if notional is not None and old_exchange_long is not None else None
+        old_company_money = _nullable_round(notional * old_company_long / 100, 2) if notional is not None and old_company_long is not None else None
+        old_exchange_basis = (
+            f"{old_exchange['as_of']} 历史快照｜{old_exchange['scope']}｜"
+            f"{old_exchange['explanation']}｜同品种历史范围 "
+            f"{old_exchange['long_range'][0]:g}–{old_exchange['long_range'][1]:g}%"
+            if old_exchange else '没有历史资料')
+        old_company_basis = (
+            f"{old_company['as_of']} 先锋官网历史品种基准｜{old_company['explanation']}"
+            if old_company else '没有历史资料')
         params = settle.get(market, {}).get(sym) or {}
-        ex_long = params.get('long')
-        ex_short = params.get('short')
-        if _as_float(ex_override.get('exchange_margin_long_pct')) is not None:
-            ex_long = _as_float(ex_override.get('exchange_margin_long_pct'))
-        if _as_float(ex_override.get('exchange_margin_short_pct')) is not None:
-            ex_short = _as_float(ex_override.get('exchange_margin_short_pct'))
-        comp_long = _as_float(override.get('margin_long_pct'))
-        comp_short = _as_float(override.get('margin_short_pct'))
-        fee_type = override.get('open_fee_type') or co.get('open_fee_type')
-        fee_val = override.get('open_fee_value') if override.get('open_fee_value') not in ('', None) else co.get('open_fee_value')
+        reference_only = params.get('reference_only') is True
+        ex_long = None if reference_only else params.get('long')
+        ex_short = None if reference_only else params.get('short')
+        # Public reference values are deliberately separate from confirmed margin.
+        reference_long = params.get('long') if reference_only else None
+        reference_short = params.get('short') if reference_only else None
+        # SO's published 8% LAUNCH margin applies to the first four contracts,
+        # but is a labelled historical listing reference, never an audited daily rate.
+        from so_listing import is_initial_so_contract, EXCHANGE_INITIAL_MARGIN_PCT, LISTING_ANNOUNCEMENT_URL
+        so_listing_reference = is_initial_so_contract(market, sym, snap)
+        if so_listing_reference and (ex_long is None or ex_short is None):
+            if ex_long is None: reference_long = EXCHANGE_INITIAL_MARGIN_PCT
+            if ex_short is None: reference_short = EXCHANGE_INITIAL_MARGIN_PCT
+        manual_margin_applied = False
+        for key,side in (('exchange_margin_long_pct','long'),('exchange_margin_short_pct','short')):
+            val = _as_float(ex_override.get(key))
+            if val is not None and 0 < val <= 100:
+                if side=='long':ex_long=val
+                else:ex_short=val
+                manual_margin_applied = True
+        company_today = verified_company_margins.get(market, {}).get(sym, {})
+        comp_long = (_as_float(company_today.get('long')) if company_today.get('long') is not None
+                     else _as_float(override.get('margin_long_pct')))
+        comp_short = (_as_float(company_today.get('short')) if company_today.get('short') is not None
+                      else _as_float(override.get('margin_short_pct')))
+        company_margin_source = (company_today.get('origin') if company_today else
+                                 '旧公司覆盖项（未按报告交易日复核）' if (comp_long is not None or comp_short is not None)
+                                 else '缺少本交易日公司保证金核验数据')
+        from margin_reference import published_addon_points, SOURCE_DATE, SOURCE_ANNOUNCEMENT
+        notice_points = published_addon_points(market, var, snap)
+        # Only a reference scenario using a historical public broker announcement.
+        # It must NOT populate company_margin_{long,short}_pct.
+        notice_base_long = ex_long if ex_long is not None else reference_long
+        notice_base_short = ex_short if ex_short is not None else reference_short
+        notice_long = (round(notice_base_long + notice_points, 6)
+                       if notice_base_long is not None and notice_points is not None
+                       and notice_base_long + notice_points <= 100 else None)
+        notice_short = (round(notice_base_short + notice_points, 6)
+                        if notice_base_short is not None and notice_points is not None
+                        and notice_base_short + notice_points <= 100 else None)
+        margin_reference_source = params.get('origin', '') if reference_only else ''
+        if so_listing_reference and (ex_long is None or ex_short is None):
+            margin_reference_source = ('郑商所2026-11-06挂牌公告：初始交易保证金8%，'
+                                      '非本日结算核验；后续调整需复核；' + LISTING_ANNOUNCEMENT_URL)
+        notice_source = (f'先锋历史公开公告 {SOURCE_DATE}：加收 {notice_points} 个百分点；'
+                         f'{SOURCE_ANNOUNCEMENT}；非本日确认值' if notice_points is not None else '')
+        # Keep the company's 2026-11-02 (or newer imported) default tariff
+        # INDEPENDENT from individual/local account overrides.
+        from company_fee_view import format_company_fee_rule, make_company_default_fee_display
+        baseline_type = co.get('open_fee_type')
+        baseline_value = co.get('open_fee_value')
+        baseline_amount = _fee_value(baseline_type, baseline_value, notional)
+        baseline_version = co.get('effective_from') or (company_version if co else '待核')
+        baseline_rule = format_company_fee_rule(baseline_type, baseline_value)
+        baseline_display = make_company_default_fee_display(
+            baseline_amount, baseline_rule, baseline_version)
+        fee_type = override.get('open_fee_type') or baseline_type
+        fee_val = override.get('open_fee_value') if override.get('open_fee_value') not in ('', None) else baseline_value
         fee_open = _fee_value(fee_type, fee_val, notional)
         # PDF gives a variety-level default "交易手续费" but does not certify a distinct 平昨/平今 rule.
         # 平昨 is an explicit reference assumption: use the same default single-side tariff unless
@@ -393,7 +554,20 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         else:
             fee_close_yesterday = _fee_value(fee_type, fee_val, notional)
             close_yesterday_basis = '仅按默认单边费率试算平昨，未获公司独立确认'
-        fee_close = _fee_value(override.get('close_today_fee_type'), override.get('close_today_fee_value'), notional)
+        # A manually typed rate is not automatically an approved customer rate.
+        # Require a dated check and an auditable nonempty origin.
+        close_candidate = _fee_value(override.get('close_today_fee_type'), override.get('close_today_fee_value'), notional)
+        verification_day = _safe_date(override.get('verified_at'))
+        evidence = str(override.get('source_note') or '').strip()
+        try:
+            verified_date = date.fromisoformat(f'{verification_day[:4]}-{verification_day[4:6]}-{verification_day[6:]}')
+        except ValueError:
+            verified_date = None
+        verification_valid = (verified_date is not None and
+                              verification_day <= now.astimezone(TZ).strftime('%Y%m%d') and bool(evidence))
+        fee_close = close_candidate if verification_valid else None
+        close_today_verified = ('已录入核验日期与来源（仅适用已核实的默认规则）' if fee_close is not None
+                                else '缺少有效核验日期/来源或平今费率，待核')
         fund = round(notional * fund_per_100m / 1e8, 6) if notional is not None else None
         def plus_fund(fee, sides=1):
             return round(fee + fund * sides, 4) if fee is not None and fund is not None else None
@@ -405,7 +579,7 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         overnight_round_trip_plus_fund = plus_fund(overnight_round_trip, 2)
         day_round_trip_plus_fund = plus_fund(day_round_trip, 2)
         fee_status = (('开仓默认估算' if fee_open is not None else '开仓待核') + '；' + close_yesterday_basis + '；' +
-                      ('平今已填覆盖参数（仍须核验）' if fee_close is not None else '平今无公司确认费率，故留空'))
+                      ('平今有来源记录（仍须核实适用账户）' if fee_close is not None else '平今无公司确认费率，故留空'))
         raw_open = params.get('raw_open_fee', '')
         raw_close = params.get('raw_close_fee', '')
         if ex_override.get('exchange_open_fee_type') and ex_override.get('exchange_open_fee_value'):
@@ -415,12 +589,13 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         issues = []
         if not m: issues.append('缺少合约乘数')
         if (market, var) not in main: issues.append('持仓量缺失/为零，无法可靠确认主力合约')
-        if ex_long is None or ex_short is None: issues.append('缺交易所保证金参数')
+        if ex_long is None or ex_short is None: issues.append('缺同日核验的交易所保证金参数')
+        if reference_only: issues.append('公开参考值不能替代交易所结算参数')
         if market == 'DCE' and not params and not ex_override: issues.append('大商所合约保证金参数待核验（授权接口失败或未配置）')
         if comp_long is None or comp_short is None: issues.append('账户/公司保证金待确认')
         if fee_open is None: issues.append('公司开仓费率待确认')
         if fee_close_yesterday is None: issues.append('公司平昨费率覆盖项不完整/无可用默认收费')
-        if fee_close is None: issues.append('公司平今费率待确认')
+        if fee_close is None: issues.append('公司平今费率或核验凭据待确认')
         if not ex_override and (raw_open in ('', 'None', 'nan') or raw_close in ('', 'None', 'nan')):
             issues.append('交易所手续费字段缺项')
         if (not ex_override) and (raw_open or raw_close):
@@ -439,9 +614,34 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
             'settlement_date': snap[:4]+'-'+snap[4:6]+'-'+snap[6:],
             'settlement': price, 'multiplier': m, 'notional': notional, 'open_interest': x['open_interest'],
             'exchange_margin_long_pct': ex_long, 'exchange_margin_short_pct': ex_short,
+            'exchange_margin_reference_long_pct': reference_long,
+            'exchange_margin_reference_short_pct': reference_short,
+            'exchange_margin_reference_one_lot': _nullable_round(notional * reference_long/100 if notional and reference_long is not None else None,2),
+            'company_notice_addon_points': notice_points,
+            'company_margin_notice_reference_long_pct': notice_long,
+            'company_margin_notice_reference_short_pct': notice_short,
+            'company_margin_notice_reference_one_lot': _nullable_round(notional * notice_long/100 if notional and notice_long is not None else None,2),
+            'margin_reference_source': margin_reference_source,
+            'company_notice_reference_source': notice_source,
+            'company_margin_source': company_margin_source,
+            'historical_exchange_long_pct': old_exchange_long,
+            'historical_exchange_short_pct': old_exchange.get('short'),
+            'historical_exchange_one_lot': old_exchange_money,
+            'historical_exchange_basis': old_exchange_basis,
+            'historical_exchange_source_url': old_exchange.get('source_url',''),
+            'historical_company_long_pct': old_company_long,
+            'historical_company_short_pct': old_company.get('short'),
+            'historical_company_one_lot': old_company_money,
+            'historical_company_basis': old_company_basis,
+            'historical_company_source_url': old_company.get('source_url',''),
             'company_margin_long_pct': comp_long, 'company_margin_short_pct': comp_short,
             'exchange_margin_one_lot': _nullable_round(notional * ex_long/100 if notional and ex_long is not None else None,2),
             'company_margin_one_lot': _nullable_round(notional * comp_long/100 if notional and comp_long is not None else None,2),
+            'company_default_fee_display': baseline_display,
+            'company_default_fee_amount': baseline_amount,
+            'company_default_fee_rule': baseline_rule,
+            'company_default_fee_version': baseline_version,
+            'company_default_fee_source': co.get('source_note',''),
             'company_fee_open': fee_open, 'company_fee_close_yesterday': fee_close_yesterday,
             'company_fee_close_today': fee_close,
             'fund_open': fund, 'company_fee_open_plus_fund': fee_open_plus_fund,
@@ -451,17 +651,29 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
             'day_round_trip_fee': day_round_trip,
             'overnight_round_trip_plus_fund': overnight_round_trip_plus_fund,
             'day_round_trip_plus_fund': day_round_trip_plus_fund,
-            'fee_status': fee_status,
+            'fee_status': fee_status, 'company_close_today_verified':close_today_verified,
+            'margin_source':(('同交易日人工覆盖项：'+str(ex_override.get('source_note'))) if manual_margin_applied else
+                             (params.get('origin') or ('交易所结算参数经AKShare获取' if params else '交易所未提供可核验保证金'))),
             'company_close_yesterday_fee_type': yesterday_type,
             'company_close_yesterday_fee_rule': yesterday_value if yesterday_value is not None else '', 
             'exchange_fee_raw_open': raw_open, 'exchange_fee_raw_close_today': raw_close,
             'data_status': status, 'issue': '；'.join(issues), 'data_source': source,
             'company_fee_type': fee_type, 'company_fee_rule': fee_val,
-            'company_close_today_fee_type': override.get('close_today_fee_type',''),
-            'company_close_today_fee_rule': override.get('close_today_fee_value',''),
+            'company_close_today_fee_type': override.get('close_today_fee_type','') if fee_close is not None else '',
+            'company_close_today_fee_rule': override.get('close_today_fee_value','') if fee_close is not None else '',
             'fee_source': override.get('source_note') or co.get('source_note', ''),
             'company_baseline_effective': override.get('effective_from') or co.get('effective_from', ''),
         })
+    # Presentation fallback: prior-year/month historical snapshots are visible
+    # beside the contract instead of hidden behind dozens of columns.
+    # Audited exchange/company rates above remain unchanged (None if missing).
+    from margin_display import enrich_margin_display
+    from exchange_fee_provider import compare_exchange_vs_broker
+    for record in result:
+        record.update(enrich_margin_display(record))
+        record.update(compare_exchange_vs_broker(
+            exchange_fee_references, record['exchange'], record['contract'],
+            snap, record['notional'], record['company_default_fee_amount']))
     return {
         'created_at_bjt': now.astimezone(TZ).isoformat(timespec='seconds'),
         'report_date': now.astimezone(TZ).date().isoformat(),
@@ -477,6 +689,8 @@ def generate(api: Any, now: Optional[datetime] = None, fund_per_100m: float = 9.
         'fund_rate_per_100m': fund_per_100m,
         'company_baseline': f'先锋期货开户默认手续费PDF（更新日期：{company_version}）；非账户级标准',
         'company_baseline_version': company_version,
+        'exchange_fee_reference_contracts':len(exchange_fee_references),
+        'exchange_fee_reference_varieties':len({(r['exchange'],r['variety']) for r in exchange_fee_references}),
         'unresolved_main': [{'exchange': market, 'variety': var} for market, var in unresolved_main],
         'records': result,
         'main_records': [r for r in result if r['is_main']=='是'],
@@ -495,13 +709,33 @@ def _csv_bytes(records: list[dict]) -> bytes:
 def _html_report(report: dict) -> bytes:
     # 离线HTML默认展示各品种具体主力合约；可切换全合约。
     esc = lambda x: html.escape('—' if x is None or x == '' else str(x))
+    version_path = BASE / 'VERSION'
+    build_version = version_path.read_text(encoding='utf-8').strip() if version_path.exists() else 'unknown'
     compact = [
         ('exchange_name', '交易所'), ('variety_name', '品种'), ('contract', '具体主力合约'),
         ('open_interest', '持仓量'), ('settlement', '结算价'), ('multiplier', '合约乘数'),
-        ('notional', '一手名义价值'), ('exchange_margin_long_pct', '交易所保证金率%'),
-        ('exchange_margin_one_lot', '交易所一手保证金'),
-        ('company_margin_one_lot', '公司一手保证金'),
-        ('company_fee_open', '开仓费/手'),
+        ('notional', '一手名义价值'),
+        ('exchange_fee_reference_display', '交易所开仓/手（第三方参考）'),
+        ('company_default_fee_display', '★先锋默认手续费/手（PDF）'),
+        ('broker_minus_exchange_display', '先锋-交易所参考毛差/手'),
+        ('broker_over_exchange_display', '先锋/交易所参考倍数'),
+        ('exchange_fee_reference_close_yesterday', '交易所平昨/手（参考）'),
+        ('exchange_fee_reference_close_today', '交易所平今/手（参考）'),
+        ('exchange_fee_reference_open_rule', '交易所开仓参考计费规则'),
+        ('exchange_fee_reference_status', '交易所费数据时间/口径'),
+        ('company_default_fee_rule', '先锋收费规则'),
+        ('company_default_fee_version', 'PDF更新日期'),
+        ('display_exchange_margin_long_pct', '展示交易所保证金率（含历史）'),
+        ('display_exchange_margin_one_lot', '展示交易所一手保证金（含历史）'),
+        ('display_company_margin_long_pct', '展示公司保证金率（含历史）'),
+        ('display_company_margin_one_lot', '展示公司一手保证金（含历史）'),
+        ('display_exchange_margin_status', '交易所保证金口径'),
+        ('display_company_margin_status', '公司保证金口径'),
+        ('exchange_margin_long_pct', '当日报表交易所多头率%（未核空）'),
+        ('company_margin_long_pct', '当前公司录入多头率%（未录空）'),
+        ('historical_exchange_basis', '交易所历史依据/日期'),
+        ('historical_company_basis', '先锋历史依据/日期'),
+        ('company_fee_open', '开仓费/手（含账户覆盖）'),
         ('company_fee_close_yesterday', '平昨费/手*'),
         ('company_fee_close_today', '平今费/手'),
         ('company_fee_open_plus_fund', '开仓含基金/手'),
@@ -509,15 +743,22 @@ def _html_report(report: dict) -> bytes:
         ('company_fee_close_today_plus_fund', '平今含基金/手'),
         ('overnight_round_trip_plus_fund', '隔夜开平双边含基金/手*'),
         ('day_round_trip_plus_fund', '日内开平双边含基金/手'),
-        ('fee_status', '手续费口径'),
+        ('fee_status', '手续费口径'), ('margin_source', '保证金来源'),
         ('data_status', '核验状态'), ('issue', '待核事项'),
     ]
     def table(columns: list[tuple[str,str]], records: list[dict]) -> str:
-        head = ''.join(f'<th>{esc(label)}</th>' for _, label in columns)
+        head = ''.join(
+            f'<th class="company-fee-primary">{esc(label)}</th>' if field == 'company_default_fee_display'
+            else f'<th>{esc(label)}</th>'
+            for field, label in columns)
         body = []
         for row in records:
             klass = 'warn' if row['data_status'] == '待核' else ''
-            cols = ''.join(f'<td>{esc(row.get(field))}</td>' for field,_ in columns)
+            cols = ''.join(
+                f'<td class="company-fee-primary">{esc(row.get(field))}</td>'
+                if field == 'company_default_fee_display'
+                else f'<td>{esc(row.get(field))}</td>'
+                for field,_ in columns)
             body.append(f'<tr class="{klass}">{cols}</tr>')
         if not body:
             body.append(f'<tr><td colspan="{len(columns)}">没有可确认的具体主力合约，核验持仓量后再使用。</td></tr>')
@@ -527,10 +768,10 @@ def _html_report(report: dict) -> bytes:
     main_table = table(compact, report['main_records'])
     all_table = table(COLUMNS, report['records'])
     markup = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>期货成本日报 {esc(report['price_date'])}</title>
-<style>:root{{--ink:#162b43;--muted:#66778c;--line:#dae2eb}}body{{font-family:system-ui,"Microsoft YaHei",sans-serif;color:var(--ink);margin:30px;background:#f5f8fc}}main{{background:white;padding:28px;border-radius:15px}}h1{{margin:0 0 8px;font-size:25px}}p{{color:var(--muted)}}.stats{{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}}.stat{{border:1px solid var(--line);padding:12px 20px;border-radius:12px}}.stat b{{display:block;font-size:19px}}.warning{{padding:12px;background:#fff4e6;border:1px solid #f0d1a5;border-radius:9px;margin:18px 0}}.wrap{{overflow:auto;max-height:75vh;border:1px solid var(--line);border-radius:10px}}table{{border-collapse:collapse;font-size:12px;width:100%}}.full table{{min-width:2900px}}th,td{{text-align:left;border-bottom:1px solid #ebeff4;padding:9px 11px;white-space:nowrap}}thead th{{position:sticky;top:0;background:#e8f0fa;z-index:3}}tr.warn td{{color:#815d20}}tr:hover{{background:#f7faff}}footer{{margin-top:28px;color:var(--muted);font-size:12px}}button{{cursor:pointer;background:white;color:#28466b;border:1px solid #ccd9e6;border-radius:8px;padding:10px 15px;margin:0 8px 12px 0}}button.active{{background:#163a61;color:white}}@media print{{body{{margin:0;background:white}}.wrap{{max-height:none;overflow:visible}}table{{font-size:9px}}.full,button{{display:none!important}}}}</style></head><body><main>
-<h1>期货手续费与保证金每日核验报告</h1><p>默认按品种显示持仓量最大的<strong>具体主力合约</strong>（不是主力连续价格）；仅供内部成本估算。</p>
+<style>:root{{--ink:#162b43;--muted:#66778c;--line:#dae2eb}}body{{font-family:system-ui,"Microsoft YaHei",sans-serif;color:var(--ink);margin:30px;background:#f5f8fc}}main{{background:white;padding:28px;border-radius:15px}}h1{{margin:0 0 8px;font-size:25px}}p{{color:var(--muted)}}.stats{{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}}.stat{{border:1px solid var(--line);padding:12px 20px;border-radius:12px}}.stat b{{display:block;font-size:19px}}.warning{{padding:12px;background:#fff4e6;border:1px solid #f0d1a5;border-radius:9px;margin:18px 0}}.wrap{{overflow:auto;max-height:75vh;border:1px solid var(--line);border-radius:10px}}table{{border-collapse:collapse;font-size:12px;width:100%}}.full table{{min-width:2900px}}th,td{{text-align:left;border-bottom:1px solid #ebeff4;padding:9px 11px;white-space:nowrap}}th.company-fee-primary{{background:#dceafe;color:#113f76}}td.company-fee-primary{{background:#edf4ff;color:#113f76;font-weight:750}}thead th{{position:sticky;top:0;background:#e8f0fa;z-index:3}}tr.warn td{{color:#815d20}}tr:hover{{background:#f7faff}}footer{{margin-top:28px;color:var(--muted);font-size:12px}}button{{cursor:pointer;background:white;color:#28466b;border:1px solid #ccd9e6;border-radius:8px;padding:10px 15px;margin:0 8px 12px 0}}button.active{{background:#163a61;color:white}}@media print{{body{{margin:0;background:white}}.wrap{{max-height:none;overflow:visible}}table{{font-size:9px}}.full,button{{display:none!important}}}}</style></head><body><main>
+<h1>期货手续费与保证金每日核验报告</h1><p><strong>软件版本：{esc(build_version)}</strong>｜<strong>先锋开户默认手续费基准：{esc(report['company_baseline_version'])} PDF</strong>｜默认按品种显示持仓量最大的具体主力合约。展示保证金优先采用当日报表参数；缺失时可显示公开参考或历史旧档并注明日期，<strong>历史参考≠今日应缴保证金</strong>。本 HTML 是生成时的静态快照，更新软件后须重新生成报告。</p>
 <div class="stats"><div class="stat">生成日<b>{esc(report['report_date'])}</b></div><div class="stat">基准结算日<b>{esc(report['price_date'])}</b></div><div class="stat">行情完整性<b>{esc(report['status'])}</b></div><div class="stat">有效合约数<b>{len(report['records'])}</b></div><div class="stat">主力合约数<b>{len(report['main_records'])}</b></div><div class="stat">无法判定主力的品种<b>{unresolved}</b></div></div>
-<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
+<div class="warning">缺失交易所：{esc(missing)}。公司默认收费依据：{esc(report['company_baseline'])}。<strong>交易所费参考</strong>取 AKShare futures_comm_info / 九期网的具体合约参考数据并按本报告结算价重新算一手金额；其更新时间可能晚于或早于报告结算日，不代表官方交易所结算核定值。<strong>毛差/倍数</strong>仅为先锋开户默认费减去第三方交易所参考费的理论对比，不是期货公司的净利润、真实佣金收入或客户账户结算费。<strong>★先锋默认手续费</strong>直接取对应品种 PDF 的单边“交易手续费”，按该结算价估算每手金额；不代表客户账户最终费率，也不能单凭此列推定平今收费。<strong>*平昨</strong>仅按照公司开户默认单边费率试算，并不等于公司确认的独立平昨标准。<strong>平今</strong>没有已确认的覆盖参数时留空；日内合计同样留空。<strong>*保证金公开参考</strong>不是当日已核验交易所或公司收费，先锋历史公告加点不保证今天或某客户仍适用。<strong>历史保证金数字</strong>来自2026年3至8月的旧档案，和本日报当前结算价结合计算出的金额只是情景示例，绝非今日应缴金额。所有金额按一手、以结算价假设开平同价估算；<strong>每次成交均另计交易者保障基金（成交金额的亿分之九）</strong>，往返含双边基金。实际客户账户以成交价、差异化费率、交易结算单为准。</div>
 <button id="mainbtn" class="active" onclick="toggle('main')">具体主力合约（默认）</button><button id="allbtn" onclick="toggle('all')">全部合约（核验用）</button>
 <section id="main" class="main">{main_table}</section><section id="all" class="full" style="display:none">{all_table}</section>
 <footer>本报告不等于客户实际交易费用；一手开平手续费分别计算。隔夜开平=开仓+平昨；日内开平=开仓+平今；含基金合计额外加双边基金，全部以同一结算价假设开平。保证金=结算价×合约乘数×保证金率。夜盘归属下一交易日。生成于北京时间 {esc(report['created_at_bjt'])}。</footer></main>

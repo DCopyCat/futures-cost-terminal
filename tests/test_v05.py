@@ -70,7 +70,7 @@ def test_verified_overrides_and_zero_close_today(tmp_path,monkeypatch):
     make_data(tmp_path,[{'exchange':'SHFE','variety':'rb','contract':'rb2701',
                           'close_yesterday_fee_type':'FIXED','close_yesterday_fee_value':'20',
                           'close_today_fee_type':'RATE','close_today_fee_value':'0.001',
-                          'effective_from':'2026-11-02','source_note':'测试手工填入'}])
+                          'effective_from':'2026-11-02','verified_at':'2026-11-06','source_note':'测试手工填入'}])
     monkeypatch.setattr(core,'DATA',tmp_path)
     rb=next(r for r in generate(LocalAPI(),now=NOW)['main_records'] if r['variety']=='rb')
     assert rb['company_fee_close_yesterday']==20
@@ -82,7 +82,7 @@ def test_verified_overrides_and_zero_close_today(tmp_path,monkeypatch):
     # Explicit free 平今 is valid only when it was deliberately entered.
     make_data(tmp_path,[{'exchange':'SHFE','variety':'rb','contract':'rb2701',
                           'close_today_fee_type':'FIXED','close_today_fee_value':'0',
-                          'effective_from':'2026-11-02'}])
+                          'effective_from':'2026-11-02','verified_at':'2026-11-06','source_note':'测试来源'}])
     rb=next(r for r in generate(LocalAPI(),now=NOW)['main_records'] if r['variety']=='rb')
     assert rb['company_fee_close_today']==0
     assert rb['day_round_trip_fee']==15.2
